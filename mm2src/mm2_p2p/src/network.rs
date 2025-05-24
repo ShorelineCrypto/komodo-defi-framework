@@ -54,6 +54,14 @@ const ALL_DEFAULT_NETID_SEEDNODES: &[SeedNodeInfo] = &[
         "12D3KooWAd5gPXwX7eDvKWwkr2FZGfoJceKDCA53SHmTFFVkrN7Q",
         "seed02.kmdefi.net",
     ),
+    SeedNodeInfo::new(
+        "12D3KooWNhGc26nzhWS36GhDibhU6hKyqpWsbxSFnbuzQRNU8HTX",
+        "mm2seed.shorelinecrypto.com",
+    ),
+    SeedNodeInfo::new(
+        "12D3KooWEvmkcLTYq4hqoQQUvf6yP3ug4jJmBvSVfwQ81kQHnmMu",
+        "mm2seed.mooo.com",
+    ),
 ];
 
 #[cfg(target_arch = "wasm32")]
