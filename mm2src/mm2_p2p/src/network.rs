@@ -15,6 +15,18 @@ impl SeedNodeInfo {
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 const ALL_DEFAULT_NETID_SEEDNODES: &[SeedNodeInfo] = &[
     SeedNodeInfo::new(
+        "12D3KooWEaZpH61H4yuQkaNG5AsyGdpBhKRppaLdAY52a774ab5u",
+        "seed01.kmdefi.net",
+    ),
+    SeedNodeInfo::new(
+        "12D3KooWAd5gPXwX7eDvKWwkr2FZGfoJceKDCA53SHmTFFVkrN7Q",
+        "seed02.kmdefi.net",
+    ),
+    SeedNodeInfo::new(
+        "12D3KooWNhGc26nzhWS36GhDibhU6hKyqpWsbxSFnbuzQRNU8HTX",
+        "mm2seed.shorelinecrypto.com",
+    ),
+    SeedNodeInfo::new(
         "12D3KooWHKkHiNhZtKceQehHhPqwU5W1jXpoVBgS1qst899GjvTm",
         "viserion.dragon-seed.com",
     ),
@@ -45,18 +57,6 @@ const ALL_DEFAULT_NETID_SEEDNODES: &[SeedNodeInfo] = &[
     SeedNodeInfo::new(
         "12D3KooWJDoV9vJdy6PnzwVETZ3fWGMhV41VhSbocR1h2geFqq9Y",
         "icefyre.dragon-seed.com",
-    ),
-    SeedNodeInfo::new(
-        "12D3KooWEaZpH61H4yuQkaNG5AsyGdpBhKRppaLdAY52a774ab5u",
-        "seed01.kmdefi.net",
-    ),
-    SeedNodeInfo::new(
-        "12D3KooWAd5gPXwX7eDvKWwkr2FZGfoJceKDCA53SHmTFFVkrN7Q",
-        "seed02.kmdefi.net",
-    ),
-    SeedNodeInfo::new(
-        "12D3KooWNhGc26nzhWS36GhDibhU6hKyqpWsbxSFnbuzQRNU8HTX",
-        "mm2seed.shorelinecrypto.com",
     ),
     SeedNodeInfo::new(
         "12D3KooWEvmkcLTYq4hqoQQUvf6yP3ug4jJmBvSVfwQ81kQHnmMu",
