@@ -1,7 +1,6 @@
 use super::*;
 use crate::IguanaPrivKey;
 use common::block_on;
-use futures_util::future;
 use mm2_core::mm_ctx::MmCtxBuilder;
 
 cfg_native!(
@@ -10,8 +9,10 @@ cfg_native!(
 
     use common::{now_sec, block_on_f01};
     use ethkey::{Generator, Random};
-    use mm2_test_helpers::for_tests::{ETH_MAINNET_CHAIN_ID, ETH_MAINNET_NODES, ETH_SEPOLIA_CHAIN_ID, ETH_SEPOLIA_NODES,
-                                  ETH_SEPOLIA_TOKEN_CONTRACT};
+    use mm2_test_helpers::for_tests::{
+        ETH_MAINNET_CHAIN_ID, ETH_MAINNET_NODES, ETH_SEPOLIA_CHAIN_ID, ETH_SEPOLIA_NODES, ETH_SEPOLIA_TOKEN_CONTRACT,
+        eth_sepolia_conf,
+    };
     use mocktopus::mocking::*;
 
     /// The gas price for the tests
@@ -26,6 +27,9 @@ cfg_native!(
 
 // old way to add some extra gas to the returned value from gas station (non-existent now), still used in tests
 const GAS_PRICE_PERCENT: u64 = 10;
+const MATIC_CHAIN_ID: u64 = 137;
+
+const ETH: &str = "ETH";
 
 fn check_sum(addr: &str, expected: &str) {
     let actual = checksum_address(addr);
@@ -119,42 +123,42 @@ fn display_u256_with_point() {
 #[test]
 fn test_wei_from_big_decimal() {
     let amount = "0.000001".parse().unwrap();
-    let wei = wei_from_big_decimal(&amount, 18).unwrap();
+    let wei = u256_from_big_decimal(&amount, 18).unwrap();
     let expected_wei: U256 = 1000000000000u64.into();
     assert_eq!(expected_wei, wei);
 
     let amount = "1.000001".parse().unwrap();
-    let wei = wei_from_big_decimal(&amount, 18).unwrap();
+    let wei = u256_from_big_decimal(&amount, 18).unwrap();
     let expected_wei: U256 = 1000001000000000000u64.into();
     assert_eq!(expected_wei, wei);
 
     let amount = 1.into();
-    let wei = wei_from_big_decimal(&amount, 18).unwrap();
+    let wei = u256_from_big_decimal(&amount, 18).unwrap();
     let expected_wei: U256 = 1000000000000000000u64.into();
     assert_eq!(expected_wei, wei);
 
     let amount = "0.000000000000000001".parse().unwrap();
-    let wei = wei_from_big_decimal(&amount, 18).unwrap();
+    let wei = u256_from_big_decimal(&amount, 18).unwrap();
     let expected_wei: U256 = 1u64.into();
     assert_eq!(expected_wei, wei);
 
     let amount = 1234.into();
-    let wei = wei_from_big_decimal(&amount, 9).unwrap();
+    let wei = u256_from_big_decimal(&amount, 9).unwrap();
     let expected_wei: U256 = 1234000000000u64.into();
     assert_eq!(expected_wei, wei);
 
     let amount = 1234.into();
-    let wei = wei_from_big_decimal(&amount, 0).unwrap();
+    let wei = u256_from_big_decimal(&amount, 0).unwrap();
     let expected_wei: U256 = 1234u64.into();
     assert_eq!(expected_wei, wei);
 
     let amount = 1234.into();
-    let wei = wei_from_big_decimal(&amount, 1).unwrap();
+    let wei = u256_from_big_decimal(&amount, 1).unwrap();
     let expected_wei: U256 = 12340u64.into();
     assert_eq!(expected_wei, wei);
 
     let amount = "1234.12345".parse().unwrap();
-    let wei = wei_from_big_decimal(&amount, 1).unwrap();
+    let wei = u256_from_big_decimal(&amount, 1).unwrap();
     let expected_wei: U256 = 12341u64.into();
     assert_eq!(expected_wei, wei);
 }
@@ -162,6 +166,8 @@ fn test_wei_from_big_decimal() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn test_wait_for_payment_spend_timeout() {
+    use futures::future;
+
     const TAKER_PAYMENT_SPEND_SEARCH_INTERVAL: f64 = 1.;
 
     EthCoin::events_from_block.mock_safe(|_, _, _, _, _, _| MockResult::Return(Box::pin(future::ok(vec![]))));
@@ -174,6 +180,7 @@ fn test_wait_for_payment_spend_timeout() {
         None,
         key_pair,
         ETH_SEPOLIA_CHAIN_ID,
+        eth_sepolia_conf(),
     );
 
     let wait_until = now_sec() - 1;
@@ -210,7 +217,7 @@ fn test_withdraw_impl_manual_fee() {
     let (_ctx, coin) = eth_coin_for_test(EthCoinType::Eth, &["http://dummy.dummy"], None, ETH_SEPOLIA_CHAIN_ID);
 
     EthCoin::address_balance.mock_safe(|_, _| {
-        let balance = wei_from_big_decimal(&1000000000.into(), 18).unwrap();
+        let balance = u256_from_big_decimal(&1000000000.into(), 18).unwrap();
         MockResult::Return(Box::new(futures01::future::ok(balance)))
     });
     EthCoin::get_addr_nonce.mock_safe(|_, _| MockResult::Return(Box::new(futures01::future::ok((0.into(), vec![])))));
@@ -218,7 +225,7 @@ fn test_withdraw_impl_manual_fee() {
     let withdraw_req = WithdrawRequest {
         amount: 1.into(),
         to: "0x7Bc1bBDD6A0a722fC9bffC49c921B685ECB84b94".to_string(),
-        coin: "ETH".to_string(),
+        coin: ETH.to_string(),
         fee: Some(WithdrawFee::EthGas {
             gas: gas_limit::ETH_MAX_TRADE_GAS,
             gas_price: 1.into(),
@@ -230,7 +237,7 @@ fn test_withdraw_impl_manual_fee() {
     let tx_details = block_on(withdraw_impl(coin, withdraw_req)).unwrap();
     let expected = Some(
         EthTxFeeDetails {
-            coin: "ETH".into(),
+            coin: ETH.into(),
             gas_price: "0.000000001".parse().unwrap(),
             gas: gas_limit::ETH_MAX_TRADE_GAS,
             total_fee: "0.00015".parse().unwrap(),
@@ -247,7 +254,7 @@ fn test_withdraw_impl_manual_fee() {
 fn test_withdraw_impl_fee_details() {
     let (_ctx, coin) = eth_coin_for_test(
         EthCoinType::Erc20 {
-            platform: "ETH".to_string(),
+            platform: ETH.to_string(),
             token_addr: Address::from_str(ETH_SEPOLIA_TOKEN_CONTRACT).unwrap(),
         },
         &["http://dummy.dummy"],
@@ -256,7 +263,7 @@ fn test_withdraw_impl_fee_details() {
     );
 
     EthCoin::address_balance.mock_safe(|_, _| {
-        let balance = wei_from_big_decimal(&1000000000.into(), 18).unwrap();
+        let balance = u256_from_big_decimal(&1000000000.into(), 18).unwrap();
         MockResult::Return(Box::new(futures01::future::ok(balance)))
     });
     EthCoin::get_addr_nonce.mock_safe(|_, _| MockResult::Return(Box::new(futures01::future::ok((0.into(), vec![])))));
@@ -276,7 +283,7 @@ fn test_withdraw_impl_fee_details() {
     let tx_details = block_on(withdraw_impl(coin, withdraw_req)).unwrap();
     let expected = Some(
         EthTxFeeDetails {
-            coin: "ETH".into(),
+            coin: ETH.into(),
             gas_price: "0.000000001".parse().unwrap(),
             gas: gas_limit::ETH_MAX_TRADE_GAS,
             total_fee: "0.00015".parse().unwrap(),
@@ -289,20 +296,20 @@ fn test_withdraw_impl_fee_details() {
 }
 
 #[test]
-fn test_add_ten_pct_one_gwei() {
-    let num = wei_from_big_decimal(&"0.1".parse().unwrap(), 9).unwrap();
-    let expected = wei_from_big_decimal(&"1.1".parse().unwrap(), 9).unwrap();
-    let actual = increase_by_percent_one_gwei(num, GAS_PRICE_PERCENT);
+fn test_add_ten_pct() {
+    let num = u256_from_big_decimal(&"0.1".parse().unwrap(), 9).unwrap();
+    let expected = u256_from_big_decimal(&"0.11".parse().unwrap(), 9).unwrap();
+    let actual = increase_by_percent(num, GAS_PRICE_PERCENT);
     assert_eq!(expected, actual);
 
-    let num = wei_from_big_decimal(&"9.9".parse().unwrap(), 9).unwrap();
-    let expected = wei_from_big_decimal(&"10.9".parse().unwrap(), 9).unwrap();
-    let actual = increase_by_percent_one_gwei(num, GAS_PRICE_PERCENT);
+    let num = u256_from_big_decimal(&"9.9".parse().unwrap(), 9).unwrap();
+    let expected = u256_from_big_decimal(&"10.89".parse().unwrap(), 9).unwrap();
+    let actual = increase_by_percent(num, GAS_PRICE_PERCENT);
     assert_eq!(expected, actual);
 
-    let num = wei_from_big_decimal(&"30.1".parse().unwrap(), 9).unwrap();
-    let expected = wei_from_big_decimal(&"33.11".parse().unwrap(), 9).unwrap();
-    let actual = increase_by_percent_one_gwei(num, GAS_PRICE_PERCENT);
+    let num = u256_from_big_decimal(&"30.1".parse().unwrap(), 9).unwrap();
+    let expected = u256_from_big_decimal(&"33.11".parse().unwrap(), 9).unwrap();
+    let actual = increase_by_percent(num, GAS_PRICE_PERCENT);
     assert_eq!(expected, actual);
 }
 
@@ -313,7 +320,7 @@ fn get_sender_trade_preimage() {
     fn expected_fee(gas_price: u64, gas_limit: u64) -> TradeFee {
         let amount = u256_to_big_decimal((gas_limit * gas_price).into(), 18).expect("!u256_to_big_decimal");
         TradeFee {
-            coin: "ETH".to_owned(),
+            coin: ETH.to_owned(),
             amount: amount.into(),
             paid_from_trading_vol: false,
         }
@@ -326,34 +333,26 @@ fn get_sender_trade_preimage() {
     let actual = block_on(coin.get_sender_trade_fee(
         TradePreimageValue::UpperBound(150.into()),
         FeeApproxStage::WithoutApprox,
-        true,
     ))
     .expect("!get_sender_trade_fee");
-    let expected = expected_fee(GAS_PRICE, gas_limit::ETH_PAYMENT + gas_limit::ETH_SENDER_REFUND);
+    let expected = expected_fee(GAS_PRICE, gas_limit::ETH_PAYMENT);
     assert_eq!(actual, expected);
 
     let value = u256_to_big_decimal(100.into(), 18).expect("!u256_to_big_decimal");
-    let actual =
-        block_on(coin.get_sender_trade_fee(TradePreimageValue::Exact(value), FeeApproxStage::OrderIssue, true))
-            .expect("!get_sender_trade_fee");
-    let expected = expected_fee(
-        GAS_PRICE_APPROXIMATION_ON_ORDER_ISSUE,
-        gas_limit::ETH_PAYMENT + gas_limit::ETH_SENDER_REFUND,
-    );
+    let actual = block_on(coin.get_sender_trade_fee(TradePreimageValue::Exact(value), FeeApproxStage::OrderIssue))
+        .expect("!get_sender_trade_fee");
+    let expected = expected_fee(GAS_PRICE_APPROXIMATION_ON_ORDER_ISSUE, gas_limit::ETH_PAYMENT);
     assert_eq!(actual, expected);
 
     let value = u256_to_big_decimal(1.into(), 18).expect("!u256_to_big_decimal");
-    let actual = block_on(coin.get_sender_trade_fee(TradePreimageValue::Exact(value), FeeApproxStage::StartSwap, true))
+    let actual = block_on(coin.get_sender_trade_fee(TradePreimageValue::Exact(value), FeeApproxStage::StartSwap))
         .expect("!get_sender_trade_fee");
-    let expected = expected_fee(
-        GAS_PRICE_APPROXIMATION_ON_START_SWAP,
-        gas_limit::ETH_PAYMENT + gas_limit::ETH_SENDER_REFUND,
-    );
+    let expected = expected_fee(GAS_PRICE_APPROXIMATION_ON_START_SWAP, gas_limit::ETH_PAYMENT);
     assert_eq!(actual, expected);
 
     let value = u256_to_big_decimal(10000000000u64.into(), 18).expect("!u256_to_big_decimal");
     let actual =
-        block_on(coin.get_sender_trade_fee(TradePreimageValue::Exact(value), FeeApproxStage::TradePreimage, true))
+        block_on(coin.get_sender_trade_fee(TradePreimageValue::Exact(value), FeeApproxStage::TradePreimageMax))
             .expect("!get_sender_trade_fee");
     let expected = expected_fee(
         GAS_PRICE_APPROXIMATION_ON_TRADE_PREIMAGE,
@@ -366,22 +365,25 @@ fn get_sender_trade_preimage() {
 #[test]
 fn get_erc20_sender_trade_preimage() {
     const APPROVE_GAS_LIMIT: u64 = 60_000;
-    static mut ALLOWANCE: u64 = 0;
-    static mut ESTIMATE_GAS_CALLED: bool = false;
+    static ALLOWANCE: AtomicU64 = AtomicU64::new(0);
+    static ESTIMATE_GAS_CALLED: AtomicBool = AtomicBool::new(false);
 
-    EthCoin::allowance
-        .mock_safe(|_, _| MockResult::Return(Box::new(futures01::future::ok(unsafe { ALLOWANCE.into() }))));
+    EthCoin::allowance.mock_safe(|_, _| {
+        MockResult::Return(Box::new(futures01::future::ok(
+            ALLOWANCE.load(AtomicOrdering::Relaxed).into(),
+        )))
+    });
 
     EthCoin::get_gas_price.mock_safe(|_| MockResult::Return(Box::pin(futures::future::ok(GAS_PRICE.into()))));
     EthCoin::estimate_gas_wrapper.mock_safe(|_, _| {
-        unsafe { ESTIMATE_GAS_CALLED = true };
+        ESTIMATE_GAS_CALLED.store(true, AtomicOrdering::Relaxed);
         MockResult::Return(Box::new(futures01::future::ok(APPROVE_GAS_LIMIT.into())))
     });
 
     fn expected_trade_fee(gas_limit: u64, gas_price: u64) -> TradeFee {
         let amount = u256_to_big_decimal((gas_limit * gas_price).into(), 18).expect("!u256_to_big_decimal");
         TradeFee {
-            coin: "ETH".to_owned(),
+            coin: ETH.to_owned(),
             amount: amount.into(),
             paid_from_trading_vol: false,
         }
@@ -389,7 +391,7 @@ fn get_erc20_sender_trade_preimage() {
 
     let (_ctx, coin) = eth_coin_for_test(
         EthCoinType::Erc20 {
-            platform: "ETH".to_string(),
+            platform: ETH.to_string(),
             token_addr: Address::default(),
         },
         &["http://dummy.dummy"],
@@ -398,64 +400,54 @@ fn get_erc20_sender_trade_preimage() {
     );
 
     // value is allowed
-    unsafe { ALLOWANCE = 1000 };
-    let value = u256_to_big_decimal(1000.into(), 18).expect("u256_to_big_decimal");
-    let actual = block_on(coin.get_sender_trade_fee(
-        TradePreimageValue::UpperBound(value),
-        FeeApproxStage::WithoutApprox,
-        true,
-    ))
-    .expect("!get_sender_trade_fee");
-    log!("{:?}", actual.amount.to_decimal());
-    unsafe { assert!(!ESTIMATE_GAS_CALLED) }
-    assert_eq!(
-        actual,
-        expected_trade_fee(gas_limit::ERC20_PAYMENT + gas_limit::ERC20_SENDER_REFUND, GAS_PRICE)
-    );
-
-    // value is greater than allowance
-    unsafe { ALLOWANCE = 999 };
+    ALLOWANCE.store(1000, AtomicOrdering::Relaxed);
     let value = u256_to_big_decimal(1000.into(), 18).expect("u256_to_big_decimal");
     let actual =
-        block_on(coin.get_sender_trade_fee(TradePreimageValue::UpperBound(value), FeeApproxStage::StartSwap, true))
+        block_on(coin.get_sender_trade_fee(TradePreimageValue::UpperBound(value), FeeApproxStage::WithoutApprox))
             .expect("!get_sender_trade_fee");
-    unsafe {
-        assert!(ESTIMATE_GAS_CALLED);
-        ESTIMATE_GAS_CALLED = false;
-    }
+    log!("{:?}", actual.amount.to_decimal());
+    assert!(!ESTIMATE_GAS_CALLED.load(AtomicOrdering::Relaxed));
+    assert_eq!(actual, expected_trade_fee(gas_limit::ERC20_PAYMENT, GAS_PRICE));
+
+    // value is greater than allowance
+    ALLOWANCE.store(999, AtomicOrdering::Relaxed);
+    let value = u256_to_big_decimal(1000.into(), 18).expect("u256_to_big_decimal");
+    let actual = block_on(coin.get_sender_trade_fee(TradePreimageValue::UpperBound(value), FeeApproxStage::StartSwap))
+        .expect("!get_sender_trade_fee");
+
+    assert!(ESTIMATE_GAS_CALLED.load(AtomicOrdering::Relaxed));
+    ESTIMATE_GAS_CALLED.store(false, AtomicOrdering::Relaxed);
+
     assert_eq!(
         actual,
         expected_trade_fee(
-            gas_limit::ERC20_PAYMENT + gas_limit::ERC20_SENDER_REFUND + APPROVE_GAS_LIMIT,
+            gas_limit::ERC20_PAYMENT + APPROVE_GAS_LIMIT,
             GAS_PRICE_APPROXIMATION_ON_START_SWAP
         )
     );
 
     // value is allowed
-    unsafe { ALLOWANCE = 1000 };
+    ALLOWANCE.store(1000, AtomicOrdering::Relaxed);
     let value = u256_to_big_decimal(999.into(), 18).expect("u256_to_big_decimal");
-    let actual =
-        block_on(coin.get_sender_trade_fee(TradePreimageValue::Exact(value), FeeApproxStage::OrderIssue, true))
-            .expect("!get_sender_trade_fee");
-    unsafe { assert!(!ESTIMATE_GAS_CALLED) }
+    let actual = block_on(coin.get_sender_trade_fee(TradePreimageValue::Exact(value), FeeApproxStage::OrderIssue))
+        .expect("!get_sender_trade_fee");
+
+    assert!(!ESTIMATE_GAS_CALLED.load(AtomicOrdering::Relaxed));
+
     assert_eq!(
         actual,
-        expected_trade_fee(
-            gas_limit::ERC20_PAYMENT + gas_limit::ERC20_SENDER_REFUND,
-            GAS_PRICE_APPROXIMATION_ON_ORDER_ISSUE
-        )
+        expected_trade_fee(gas_limit::ERC20_PAYMENT, GAS_PRICE_APPROXIMATION_ON_ORDER_ISSUE)
     );
 
     // value is greater than allowance
-    unsafe { ALLOWANCE = 1000 };
+    ALLOWANCE.store(1000, AtomicOrdering::Relaxed);
     let value = u256_to_big_decimal(1500.into(), 18).expect("u256_to_big_decimal");
-    let actual =
-        block_on(coin.get_sender_trade_fee(TradePreimageValue::Exact(value), FeeApproxStage::TradePreimage, true))
-            .expect("!get_sender_trade_fee");
-    unsafe {
-        assert!(ESTIMATE_GAS_CALLED);
-        ESTIMATE_GAS_CALLED = false;
-    }
+    let actual = block_on(coin.get_sender_trade_fee(TradePreimageValue::Exact(value), FeeApproxStage::TradePreimage))
+        .expect("!get_sender_trade_fee");
+
+    assert!(ESTIMATE_GAS_CALLED.load(AtomicOrdering::Relaxed));
+    ESTIMATE_GAS_CALLED.store(false, AtomicOrdering::Relaxed);
+
     assert_eq!(
         actual,
         expected_trade_fee(
@@ -474,7 +466,7 @@ fn get_receiver_trade_preimage() {
     let amount =
         u256_to_big_decimal((gas_limit::ETH_RECEIVER_SPEND * GAS_PRICE).into(), 18).expect("!u256_to_big_decimal");
     let expected_fee = TradeFee {
-        coin: "ETH".to_owned(),
+        coin: ETH.to_owned(),
         amount: amount.into(),
         paid_from_trading_vol: false,
     };
@@ -497,7 +489,7 @@ fn test_get_fee_to_send_taker_fee() {
     // fee to send taker fee is `TRANSFER_GAS_LIMIT * gas_price` always.
     let amount = u256_to_big_decimal((TRANSFER_GAS_LIMIT * GAS_PRICE).into(), 18).expect("!u256_to_big_decimal");
     let expected_fee = TradeFee {
-        coin: "ETH".to_owned(),
+        coin: ETH.to_owned(),
         amount: amount.into(),
         paid_from_trading_vol: false,
     };
@@ -514,7 +506,7 @@ fn test_get_fee_to_send_taker_fee() {
 
     let (_ctx, coin) = eth_coin_for_test(
         EthCoinType::Erc20 {
-            platform: "ETH".to_string(),
+            platform: ETH.to_string(),
             token_addr: Address::from_str("0xaD22f63404f7305e4713CcBd4F296f34770513f4").unwrap(),
         },
         &["http://dummy.dummy"],
@@ -544,7 +536,7 @@ fn test_get_fee_to_send_taker_fee_insufficient_balance() {
     EthCoin::get_gas_price.mock_safe(|_| MockResult::Return(Box::pin(futures::future::ok(40.into()))));
     let (_ctx, coin) = eth_coin_for_test(
         EthCoinType::Erc20 {
-            platform: "ETH".to_string(),
+            platform: ETH.to_string(),
             token_addr: Address::from_str("0xaD22f63404f7305e4713CcBd4F296f34770513f4").unwrap(),
         },
         ETH_MAINNET_NODES,
@@ -597,7 +589,7 @@ fn validate_dex_fee_invalid_sender_eth() {
 fn validate_dex_fee_invalid_sender_erc() {
     let (_ctx, coin) = eth_coin_for_test(
         EthCoinType::Erc20 {
-            platform: "ETH".to_string(),
+            platform: ETH.to_string(),
             token_addr: Address::from_str("0xa1d6df714f91debf4e0802a542e13067f31b8262").unwrap(),
         },
         ETH_MAINNET_NODES,
@@ -671,7 +663,7 @@ fn validate_dex_fee_eth_confirmed_before_min_block() {
 fn validate_dex_fee_erc_confirmed_before_min_block() {
     let (_ctx, coin) = eth_coin_for_test(
         EthCoinType::Erc20 {
-            platform: "ETH".to_string(),
+            platform: ETH.to_string(),
             token_addr: Address::from_str("0xa1d6df714f91debf4e0802a542e13067f31b8262").unwrap(),
         },
         ETH_MAINNET_NODES,
@@ -781,11 +773,13 @@ fn polygon_check_if_my_payment_sent() {
       "fname": "Polygon",
       "rpcport": 80,
       "mm2": 1,
-      "chain_id": 137,
       "avg_blocktime": 0.03,
       "required_confirmations": 3,
       "protocol": {
-        "type": "ETH"
+        "type": "ETH",
+        "protocol_data": {
+            "chain_id": MATIC_CHAIN_ID
+        }
       }
     });
 
@@ -802,7 +796,9 @@ fn polygon_check_if_my_payment_sent() {
         "MATIC",
         &conf,
         &request,
-        CoinProtocol::ETH,
+        CoinProtocol::ETH {
+            chain_id: MATIC_CHAIN_ID,
+        },
         priv_key_policy,
     ))
     .unwrap();
@@ -838,6 +834,7 @@ fn test_message_hash() {
         None,
         key_pair,
         ETH_SEPOLIA_CHAIN_ID,
+        eth_sepolia_conf(),
     );
 
     let message_hash = coin.sign_message_hash("test").unwrap();
@@ -860,10 +857,11 @@ fn test_sign_verify_message() {
         None,
         key_pair,
         ETH_SEPOLIA_CHAIN_ID,
+        eth_sepolia_conf(),
     );
 
     let message = "test";
-    let signature = coin.sign_message(message).unwrap();
+    let signature = coin.sign_message(message, None).unwrap();
     assert_eq!(signature, "0xcdf11a9c4591fb7334daa4b21494a2590d3f7de41c7d2b333a5b61ca59da9b311b492374cc0ba4fbae53933260fa4b1c18f15d95b694629a7b0620eec77a938600");
 
     let is_valid = coin
@@ -877,10 +875,17 @@ fn test_sign_verify_message() {
 fn test_eth_extract_secret() {
     let key_pair = Random.generate().unwrap();
     let coin_type = EthCoinType::Erc20 {
-        platform: "ETH".to_string(),
+        platform: ETH.to_string(),
         token_addr: Address::from_str("0xc0eb7aed740e1796992a08962c15661bdeb58003").unwrap(),
     };
-    let (_ctx, coin) = eth_coin_from_keypair(coin_type, &["http://dummy.dummy"], None, key_pair, ETH_SEPOLIA_CHAIN_ID);
+    let (_ctx, coin) = eth_coin_from_keypair(
+        coin_type,
+        &["http://dummy.dummy"],
+        None,
+        key_pair,
+        ETH_SEPOLIA_CHAIN_ID,
+        eth_sepolia_conf(),
+    );
 
     // raw transaction bytes of https://ropsten.etherscan.io/tx/0xcb7c14d3ff309996d582400369393b6fa42314c52245115d4a3f77f072c36da9
     let tx_bytes = &[
@@ -934,11 +939,13 @@ fn test_eth_validate_valid_and_invalid_pubkey() {
       "fname": "Polygon",
       "rpcport": 80,
       "mm2": 1,
-      "chain_id": 137,
       "avg_blocktime": 0.03,
       "required_confirmations": 3,
       "protocol": {
-        "type": "ETH"
+        "type": "ETH",
+        "protocol_data": {
+            "chain_id": MATIC_CHAIN_ID
+        }
       }
     });
 
@@ -959,7 +966,9 @@ fn test_eth_validate_valid_and_invalid_pubkey() {
         "MATIC",
         &conf,
         &request,
-        CoinProtocol::ETH,
+        CoinProtocol::ETH {
+            chain_id: MATIC_CHAIN_ID,
+        },
         priv_key_policy,
     ))
     .unwrap();
@@ -973,6 +982,123 @@ fn test_eth_validate_valid_and_invalid_pubkey() {
     // Test expected to fail at this point as we're using a valid pubkey to validate against an invalid pubkeys
     assert!(coin.validate_other_pubkey(&[1u8; 20]).is_err());
     assert!(coin.validate_other_pubkey(&[1u8; 8]).is_err());
+}
+
+#[test]
+fn test_get_enabled_erc20_by_contract_and_platform() {
+    use super::erc20::get_enabled_erc20_by_platform_and_contract;
+    use crate::rpc_command::get_enabled_coins::get_enabled_coins_rpc;
+    const BNB_TOKEN: &str = "1INCH-BEP20";
+    const ETH_TOKEN: &str = "1INCH-ERC20";
+
+    let conf = json!({
+        "coins": [{
+      "coin": "BNB",
+      "name": "binancesmartchain",
+      "fname": "Binance Coin",
+      "avg_blocktime": 3,
+      "rpcport": 80,
+      "mm2": 1,
+      "use_access_list": true,
+      "max_eth_tx_type": 2,
+      "required_confirmations": 3,
+      "protocol": {
+        "type": "ETH",
+        "protocol_data": {
+            "chain_id": 56
+        }
+      },
+      "derivation_path": "m/44'/60'",
+      "trezor_coin": "Binance Smart Chain",
+      "links": {
+        "homepage": "https://www.binance.org"
+      }
+    },{
+      "coin": BNB_TOKEN,
+      "name": "1inch_bep20",
+      "fname": "1Inch",
+      "rpcport": 80,
+      "mm2": 1,
+      "avg_blocktime": 3,
+      "required_confirmations": 3,
+      "protocol": {
+        "type": "ERC20",
+        "protocol_data": {
+          "platform": "BNB",
+          "contract_address": "0x111111111117dC0aa78b770fA6A738034120C302"
+        }
+      },
+      "derivation_path": "m/44'/60'",
+      "use_access_list": true,
+      "max_eth_tx_type": 2,
+      "gas_limit": {
+          "eth_send_erc20": 60000,
+          "erc20_payment": 110000,
+          "erc20_receiver_spend": 85000,
+          "erc20_sender_refund": 85000
+      }
+    },{
+      "coin": "ETH",
+      "name": "ethereum",
+      "fname": "Ethereum",
+      "rpcport": 80,
+      "mm2": 1,
+      "sign_message_prefix": "Ethereum Signed Message:\n",
+      "required_confirmations": 3,
+      "avg_blocktime": 15,
+      "protocol": {
+        "type": "ETH",
+        "protocol_data": {
+            "chain_id": 1
+        }
+      },
+      "derivation_path": "m/44'/60'"
+    },{
+      "coin": ETH_TOKEN,
+      "name": "1inch_erc20",
+      "fname": "1Inch",
+      "rpcport": 80,
+      "mm2": 1,
+      "avg_blocktime": 15,
+      "required_confirmations": 3,
+      "decimals": 18,
+      "protocol": {
+        "type": "ERC20",
+        "protocol_data": {
+          "platform": "ETH",
+          "contract_address": "0x111111111117dC0aa78b770fA6A738034120C302"
+        }
+      },
+      "derivation_path": "m/44'/60'"
+    }]
+    });
+
+    let ctx = MmCtxBuilder::new().with_conf(conf).into_mm_arc();
+    CryptoCtx::init_with_iguana_passphrase(
+        ctx.clone(),
+        "spice describe gravity federal blast come thank unfair canal monkey style afraid",
+    )
+    .unwrap();
+
+    let req_bnb_token = json!({
+        "urls":["https://bsc-dataseed1.binance.org","https://bsc-dataseed1.defibit.io"],
+        "swap_contract_address":"0x9130b257d37a52e52f21054c4da3450c72f595ce",
+    });
+    block_on(lp_coininit(&ctx, BNB_TOKEN, &req_bnb_token)).unwrap();
+
+    let req_eth_token = json!({
+        "urls":["https://ethereum-rpc.publicnode.com", "https://eth.drpc.org"],
+        "swap_contract_address":"0x9130b257d37a52e52f21054c4da3450c72f595ce",
+    });
+    block_on(lp_coininit(&ctx, ETH_TOKEN, &req_eth_token)).unwrap();
+
+    let coins = block_on(get_enabled_coins_rpc(ctx.clone(), None)).unwrap();
+    assert_eq!(coins.coins.len(), 2);
+
+    let contract_address = Address::from_str("0x111111111117dC0aa78b770fA6A738034120C302").unwrap();
+    let res = block_on(get_enabled_erc20_by_platform_and_contract(&ctx, ETH, &contract_address)).unwrap();
+    assert!(res.is_some());
+    assert_eq!(res.unwrap().platform_ticker(), ETH);
 }
 
 #[test]
@@ -996,11 +1122,12 @@ fn test_gas_limit_conf() {
             "coin": "ETH",
             "name": "ethereum",
             "fname": "Ethereum",
-            "chain_id": 1337,
             "protocol":{
-                "type": "ETH"
+                "type": "ETH",
+                "protocol_data": {
+                    "chain_id": ETH_SEPOLIA_CHAIN_ID
+                }
             },
-            "chain_id": 1,
             "rpcport": 80,
             "mm2": 1,
             "gas_limit": {
@@ -1018,9 +1145,9 @@ fn test_gas_limit_conf() {
         "urls":ETH_SEPOLIA_NODES,
         "swap_contract_address":ETH_SEPOLIA_SWAP_CONTRACT
     });
-    let coin = block_on(lp_coininit(&ctx, "ETH", &req)).unwrap();
+    let coin = block_on(lp_coininit(&ctx, ETH, &req)).unwrap();
     let eth_coin = match coin {
-        MmCoinEnum::EthCoin(eth_coin) => eth_coin,
+        MmCoinEnum::EthCoinVariant(eth_coin) => eth_coin,
         _ => panic!("not eth coin"),
     };
     assert!(
@@ -1036,5 +1163,98 @@ fn test_gas_limit_conf() {
 fn test_h256_to_str() {
     let h = H256::from_str("5136701f11060010841c9708c3eb26f6606a070b8ae43f4b98b6d7b10a545258").unwrap();
     let b: BytesJson = h.0.to_vec().into();
-    println!("H256=0x{:02x}", b);
+    println!("H256=0x{b:02x}");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_eth_conf_params() {
+    let key_pair = Random.generate().unwrap();
+    let (_ctx, coin) = eth_coin_from_keypair(
+        EthCoinType::Eth,
+        ETH_SEPOLIA_NODES,
+        None,
+        key_pair,
+        ETH_SEPOLIA_CHAIN_ID,
+        json!({
+            "coin": "ETH",
+            "name": "ethereum",
+            "derivation_path": "m/44'/60'",
+            "protocol": {
+                "type": "ETH",
+                "protocol_data": {
+                    "chain_id": ETH_SEPOLIA_CHAIN_ID,
+                }
+            },
+            "swap_gas_fee_policy": "High",
+            "max_eth_tx_type": 2,
+            "estimate_gas_mult": 1.25,
+            "gas_price_adjust": {
+                "legacy_price_mult": 0.25,
+                "base_fee_mult": [0.1, 0.2, 0.3],
+                "priority_fee_mult": [0.4, 0.5, 0.6]
+            },
+            "gas_limit": {
+                "eth_send_coins": 21_000,
+                "eth_send_erc20": 120_123,
+                "eth_payment": 75_456,
+                "erc20_payment": 110_999,
+                "eth_receiver_spend": 50_111,
+                "erc20_receiver_spend":120_333,
+                "eth_sender_refund": 65_222,
+                "erc20_sender_refund": 135_777,
+                "eth_max_trade_gas": 150_234,
+            },
+            "gas_limit_v2": {
+                "maker": {
+                    "eth_payment": 110_111,
+                    "erc20_payment": 120_111,
+                    "eth_taker_spend": 130_111,
+                    "erc20_taker_spend": 140_111,
+                    "eth_maker_refund_timelock": 105_111,
+                    "erc20_maker_refund_timelock": 115_111,
+                    "eth_maker_refund_secret": 125_111,
+                    "erc20_maker_refund_secret": 135_111
+                },
+                "taker": {
+                    "eth_payment": 110_222,
+                    "erc20_payment": 111_222,
+                    "eth_maker_spend": 112_222,
+                    "erc20_maker_spend": 113_222,
+                    "eth_taker_refund_timelock": 114_222,
+                    "erc20_taker_refund_timelock": 115_222,
+                    "eth_taker_refund_secret": 116_222,
+                    "erc20_taker_refund_secret": 117_222,
+                    "approve_payment": 118_222
+                },
+                "nft_maker": {
+                    "erc721_payment": 120_333,
+                    "erc1155_payment": 121_333,
+                    "erc721_taker_spend": 122_333,
+                    "erc1155_taker_spend": 123_333,
+                    "erc721_maker_refund_timelock": 124_333,
+                    "erc1155_maker_refund_timelock": 125_333,
+                    "erc721_maker_refund_secret": 126_333,
+                    "erc1155_maker_refund_secret": 127_333
+                }
+            }
+        }),
+    );
+    assert_eq!(coin.max_eth_tx_type, Some(2));
+    assert_eq!(coin.estimate_gas_mult, Some(1.25));
+    assert_eq!(coin.gas_limit.eth_send_erc20, 120_123);
+    assert_eq!(coin.gas_limit.eth_max_trade_gas, 150_234);
+    assert_eq!(coin.gas_limit_v2.maker.eth_maker_refund_timelock, 105_111);
+    assert_eq!(coin.gas_limit_v2.taker.eth_taker_refund_secret, 116_222);
+    assert_eq!(coin.gas_limit_v2.nft_maker.erc1155_maker_refund_timelock, 125_333);
+    assert_eq!(coin.gas_price_adjust.as_ref().unwrap().legacy_price_mult, 0.25);
+    assert_eq!(coin.gas_price_adjust.as_ref().unwrap().base_fee_mult, [0.1, 0.2, 0.3]);
+    assert_eq!(
+        coin.gas_price_adjust.as_ref().unwrap().priority_fee_mult,
+        [0.4, 0.5, 0.6]
+    );
+    assert!(matches!(
+        *coin.swap_gas_fee_policy.lock().unwrap(),
+        SwapGasFeePolicy::High
+    ));
 }

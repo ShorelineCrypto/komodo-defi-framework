@@ -2,9 +2,11 @@ use crate::SECP_VERIFY;
 use crypto::dhash160;
 use hash::{H160, H264, H520};
 use hex::ToHex;
-use secp256k1::{recovery::{RecoverableSignature, RecoveryId},
-                Message as SecpMessage, PublicKey, Signature as SecpSignature};
-use std::{fmt, ops};
+use secp256k1::{
+    recovery::{RecoverableSignature, RecoveryId},
+    Error as SecpError, Message as SecpMessage, PublicKey, Signature as SecpSignature,
+};
+use std::{fmt, ops::Deref};
 use {CompactSignature, Error, Message, Signature};
 
 /// Secret public key
@@ -17,7 +19,9 @@ pub enum Public {
 }
 
 impl Default for Public {
-    fn default() -> Public { Public::Compressed(H264::default()) }
+    fn default() -> Public {
+        Public::Compressed(H264::default())
+    }
 }
 
 impl Public {
@@ -37,7 +41,9 @@ impl Public {
         }
     }
 
-    pub fn address_hash(&self) -> H160 { dhash160(self) }
+    pub fn address_hash(&self) -> H160 {
+        dhash160(self)
+    }
 
     pub fn verify(&self, message: &Message, signature: &Signature) -> Result<bool, Error> {
         let public = match self {
@@ -80,9 +86,14 @@ impl Public {
             Public::Normal(_) => None,
         }
     }
+
+    #[inline(always)]
+    pub fn to_secp256k1_pubkey(&self) -> Result<PublicKey, SecpError> {
+        PublicKey::from_slice(self.deref())
+    }
 }
 
-impl ops::Deref for Public {
+impl Deref for Public {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
@@ -111,5 +122,7 @@ impl fmt::Debug for Public {
 }
 
 impl fmt::Display for Public {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { self.to_hex::<String>().fmt(f) }
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.to_hex::<String>().fmt(f)
+    }
 }

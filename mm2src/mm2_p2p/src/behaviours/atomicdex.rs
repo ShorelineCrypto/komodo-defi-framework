@@ -2,9 +2,11 @@ use common::executor::SpawnFuture;
 use compatible_time::Duration;
 use derive_more::Display;
 use futures::channel::mpsc::{channel, Receiver, Sender};
-use futures::{channel::oneshot,
-              future::{join_all, poll_fn},
-              Future, FutureExt, SinkExt, StreamExt};
+use futures::{
+    channel::oneshot,
+    future::{join_all, poll_fn},
+    Future, FutureExt, SinkExt, StreamExt,
+};
 use futures_rustls::rustls;
 use futures_ticker::Ticker;
 use lazy_static::lazy_static;
@@ -18,11 +20,11 @@ use libp2p::swarm::{ConnectionDenied, ConnectionId, NetworkBehaviour, SwarmEvent
 use libp2p::{identity, noise, PeerId, Swarm};
 use libp2p::{Multiaddr, Transport};
 use log::{debug, error, info};
+use mm2_net::ip_addr::is_global_ipv4;
 use rand::seq::SliceRandom;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::iter;
 use std::net::IpAddr;
 use std::sync::{Mutex, MutexGuard};
 use std::task::{Context, Poll};
@@ -30,18 +32,19 @@ use timed_map::{MapKind, TimedMap};
 
 use super::peers_exchange::{PeerAddresses, PeersExchange, PeersExchangeRequest, PeersExchangeResponse};
 use super::ping::AdexPing;
-use super::request_response::{build_request_response_behaviour, PeerRequest, PeerResponse, RequestResponseBehaviour,
-                              RequestResponseSender};
+use super::request_response::{
+    build_request_response_behaviour, PeerRequest, PeerResponse, RequestResponseBehaviour, RequestResponseSender,
+};
 use crate::application::request_response::network_info::NetworkInfoRequest;
 use crate::application::request_response::P2PRequest;
-use crate::network::{get_all_network_seednodes, DEFAULT_NETID};
 use crate::relay_address::{RelayAddress, RelayAddressError};
 use crate::swarm_runtime::SwarmRuntime;
 use crate::{decode_message, encode_message, NetworkInfo, NetworkPorts, RequestResponseBehaviourEvent};
 
 pub use libp2p::gossipsub::{Behaviour as Gossipsub, IdentTopic, MessageAuthenticity, MessageId, Topic, TopicHash};
-pub use libp2p::gossipsub::{ConfigBuilder as GossipsubConfigBuilder, Event as GossipsubEvent,
-                            Message as GossipsubMessage};
+pub use libp2p::gossipsub::{
+    ConfigBuilder as GossipsubConfigBuilder, Event as GossipsubEvent, Message as GossipsubMessage,
+};
 
 pub type AdexCmdTx = Sender<AdexBehaviourCmd>;
 pub type AdexEventRx = Receiver<AdexBehaviourEvent>;
@@ -54,6 +57,7 @@ const CONNECTED_RELAYS_CHECK_INTERVAL: Duration = Duration::from_secs(30);
 const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(600);
 const ANNOUNCE_INITIAL_DELAY: Duration = Duration::from_secs(60);
 const CHANNEL_BUF_SIZE: usize = 1024 * 8;
+const DEFAULT_NETID: u16 = 8762;
 
 /// Used in time validation logic for each peer which runs immediately  after the
 /// `ConnectionEstablished` event.
@@ -107,11 +111,15 @@ impl From<AdexResponse> for PeerResponse {
 pub struct AdexResponseChannel(pub ResponseChannel<PeerResponse>);
 
 impl From<ResponseChannel<PeerResponse>> for AdexResponseChannel {
-    fn from(res: ResponseChannel<PeerResponse>) -> Self { AdexResponseChannel(res) }
+    fn from(res: ResponseChannel<PeerResponse>) -> Self {
+        AdexResponseChannel(res)
+    }
 }
 
 impl From<AdexResponseChannel> for ResponseChannel<PeerResponse> {
-    fn from(res: AdexResponseChannel) -> Self { res.0 }
+    fn from(res: AdexResponseChannel) -> Self {
+        res.0
+    }
 }
 
 #[derive(Debug)]
@@ -245,7 +253,7 @@ async fn validate_peer_time(peer: PeerId, mut response_tx: Sender<PeerId>, rp_se
                 let now = common::get_utc_timestamp();
                 let now: u64 = now
                     .try_into()
-                    .unwrap_or_else(|_| panic!("`common::get_utc_timestamp` returned invalid data: {}", now));
+                    .unwrap_or_else(|_| panic!("`common::get_utc_timestamp` returned invalid data: {now}"));
 
                 let diff = now.abs_diff(timestamp);
 
@@ -284,7 +292,7 @@ async fn request_one_peer(peer: PeerId, req: Vec<u8>, mut request_response_tx: R
     match internal_response_rx.await {
         Ok(response) => response,
         Err(e) => PeerResponse::Err {
-            err: format!("Error on request the peer {:?}: \"{:?}\". Request next peer", peer, e),
+            err: format!("Error on request the peer {peer:?}: \"{e:?}\". Request next peer"),
         },
     }
 }
@@ -398,7 +406,9 @@ impl AtomicDexBehaviour {
         }
     }
 
-    fn spawn(&self, fut: impl Future<Output = ()> + Send + 'static) { self.runtime.spawn(fut) }
+    fn spawn(&self, fut: impl Future<Output = ()> + Send + 'static) {
+        self.runtime.spawn(fut)
+    }
 
     fn process_cmd(&mut self, cmd: AdexBehaviourCmd) -> Result<(), AdexBehaviourError> {
         match cmd {
@@ -560,15 +570,21 @@ impl AtomicDexBehaviour {
         self.core.floodsub.publish(FloodsubTopic::new(PEERS_TOPIC), serialized);
     }
 
-    pub fn connected_relays_len(&self) -> usize { self.core.gossipsub.connected_relays_len() }
+    pub fn connected_relays_len(&self) -> usize {
+        self.core.gossipsub.connected_relays_len()
+    }
 
-    pub fn relay_mesh_len(&self) -> usize { self.core.gossipsub.relay_mesh_len() }
+    pub fn relay_mesh_len(&self) -> usize {
+        self.core.gossipsub.relay_mesh_len()
+    }
 
     pub fn received_messages_in_period(&self) -> (Duration, usize) {
         self.core.gossipsub.get_received_messages_in_period()
     }
 
-    pub fn connected_peers_len(&self) -> usize { self.core.gossipsub.get_num_peers() }
+    pub fn connected_peers_len(&self) -> usize {
+        self.core.gossipsub.get_num_peers()
+    }
 }
 
 pub enum NodeType {
@@ -601,7 +617,9 @@ impl NodeType {
         }
     }
 
-    pub fn is_relay(&self) -> bool { matches!(self, NodeType::Relay { .. } | NodeType::RelayInMemory { .. }) }
+    pub fn is_relay(&self) -> bool {
+        matches!(self, NodeType::Relay { .. } | NodeType::RelayInMemory { .. })
+    }
 
     pub fn wss_certs(&self) -> Option<&WssCerts> {
         match self {
@@ -613,26 +631,32 @@ impl NodeType {
 
 #[derive(Debug, Display)]
 pub enum AdexBehaviourError {
-    #[display(fmt = "{}", _0)]
+    #[display(fmt = "{_0}")]
     ParsingRelayAddress(RelayAddressError),
-    #[display(fmt = "{}", _0)]
+    #[display(fmt = "{_0}")]
     SubscriptionError(SubscriptionError),
-    #[display(fmt = "{}", _0)]
+    #[display(fmt = "{_0}")]
     PublishError(PublishError),
-    #[display(fmt = "{}", _0)]
+    #[display(fmt = "{_0}")]
     InitializationError(String),
 }
 
 impl From<RelayAddressError> for AdexBehaviourError {
-    fn from(e: RelayAddressError) -> Self { AdexBehaviourError::ParsingRelayAddress(e) }
+    fn from(e: RelayAddressError) -> Self {
+        AdexBehaviourError::ParsingRelayAddress(e)
+    }
 }
 
 impl From<SubscriptionError> for AdexBehaviourError {
-    fn from(e: SubscriptionError) -> Self { AdexBehaviourError::SubscriptionError(e) }
+    fn from(e: SubscriptionError) -> Self {
+        AdexBehaviourError::SubscriptionError(e)
+    }
 }
 
 impl From<PublishError> for AdexBehaviourError {
-    fn from(e: PublishError) -> Self { AdexBehaviourError::PublishError(e) }
+    fn from(e: PublishError) -> Self {
+        AdexBehaviourError::PublishError(e)
+    }
 }
 
 pub fn generate_ed25519_keypair(mut p2p_key: [u8; 32]) -> identity::Keypair {
@@ -714,23 +738,12 @@ fn start_gossipsub(
             .map_err(|e| AdexBehaviourError::InitializationError(e.to_owned()))?;
 
         // build a gossipsub network behaviour
-        let mut gossipsub = Gossipsub::new(MessageAuthenticity::Author(local_peer_id), gossipsub_config)
+        let gossipsub = Gossipsub::new(MessageAuthenticity::Author(local_peer_id), gossipsub_config)
             .map_err(|e| AdexBehaviourError::InitializationError(e.to_owned()))?;
 
         let floodsub = Floodsub::new(local_peer_id, config.netid != DEFAULT_NETID);
 
-        let mut peers_exchange = PeersExchange::new(network_info);
-        if !network_info.in_memory() {
-            // Please note WASM nodes don't support `PeersExchange` currently,
-            // so `get_all_network_seednodes` returns an empty list.
-            for (peer_id, addr, _domain) in get_all_network_seednodes(config.netid) {
-                let multiaddr = addr.try_to_multiaddr(network_info)?;
-                peers_exchange.add_peer_addresses_to_known_peers(&peer_id, iter::once(multiaddr).collect());
-                if peer_id != local_peer_id {
-                    gossipsub.add_explicit_relay(peer_id);
-                }
-            }
-        }
+        let peers_exchange = PeersExchange::new(network_info);
 
         // build a request-response network behaviour
         let request_response = build_request_response_behaviour();
@@ -778,7 +791,7 @@ fn start_gossipsub(
             }
         },
         NodeType::RelayInMemory { port } => {
-            let memory_addr: Multiaddr = format!("/memory/{}", port).parse().unwrap();
+            let memory_addr: Multiaddr = format!("/memory/{port}").parse().unwrap();
             libp2p::Swarm::listen_on(&mut swarm, memory_addr).unwrap();
         },
         _ => (),
@@ -795,6 +808,14 @@ fn start_gossipsub(
             Err(e) => error!("Dial {:?} failed: {:?}", relay, e),
         }
     }
+
+    // All currently connected peers come from the config file (because we didn't connect any other
+    // ones yet), so it's safe to treat them as trusted nodes.
+    let peers: Vec<_> = libp2p::Swarm::connected_peers(&swarm).cloned().collect();
+    for peer in peers {
+        swarm.behaviour_mut().core.gossipsub.add_explicit_peer(&peer);
+    }
+
     drop(recently_dialed_peers);
 
     let mut check_connected_relays_interval =
@@ -817,6 +838,7 @@ fn start_gossipsub(
             if swarm.disconnect_peer_id(peer_id).is_err() {
                 error!("Disconnection from `{peer_id}` failed unexpectedly, which should never happen.");
             }
+            swarm.behaviour_mut().core.gossipsub.remove_explicit_peer(&peer_id);
         }
 
         loop {
@@ -968,7 +990,7 @@ fn announce_my_addresses(swarm: &mut AtomicDexSwarm) {
         .filter(|listener| {
             for protocol in listener.iter() {
                 if let Protocol::Ip4(ip) = protocol {
-                    return ip.is_global();
+                    return is_global_ipv4(&ip);
                 }
             }
             false

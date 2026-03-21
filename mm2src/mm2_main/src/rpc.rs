@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright © 2023 Pampex LTD and TillyHK LTD                                *
+ * Copyright © 2025 Gleec Holding OÜ                                *
  *                                                                            *
  * See the CONTRIBUTOR-LICENSE-AGREEMENT, COPYING, LICENSE-COPYRIGHT-NOTICE   *
  * and DEVELOPER-CERTIFICATE-OF-ORIGIN files in the LEGAL directory in        *
@@ -17,7 +17,7 @@
 //
 //  rpc.rs
 //
-//  Copyright © 2023 Pampex LTD and TillyHK LTD. All rights reserved.
+//  Copyright © 2025 Gleec Holding OÜ. All rights reserved.
 //
 
 use crate::rpc::rate_limiter::RateLimitError;
@@ -41,12 +41,14 @@ cfg_native! {
     use mm2_net::event_streaming::sse_handler::{handle_sse, SSE_ENDPOINT};
 }
 
-#[path = "rpc/dispatcher/dispatcher.rs"] mod dispatcher;
+#[path = "rpc/dispatcher/dispatcher.rs"]
+mod dispatcher;
 #[path = "rpc/dispatcher/dispatcher_legacy.rs"]
 mod dispatcher_legacy;
 pub mod lp_commands;
 mod rate_limiter;
 mod streaming_activations;
+pub mod wc_commands;
 
 /// Lists the RPC method not requiring the "userpass" authentication.
 /// None is also public to skip auth and display proper error in case of method is missing
@@ -80,15 +82,15 @@ pub enum DispatcherError {
     Banned,
     #[display(fmt = "No such method")]
     NoSuchMethod,
-    #[display(fmt = "Error parsing request: {}", _0)]
+    #[display(fmt = "Error parsing request: {_0}")]
     InvalidRequest(String),
     #[display(fmt = "Selected method can be called from localhost only!")]
     LocalHostOnly,
     #[display(fmt = "Userpass is not set!")]
     UserpassIsNotSet,
-    #[display(fmt = "Userpass is invalid! - {}", _0)]
+    #[display(fmt = "Userpass is invalid! - {_0}")]
     UserpassIsInvalid(RateLimitError),
-    #[display(fmt = "Error parsing mmrpc version: {}", _0)]
+    #[display(fmt = "Error parsing mmrpc version: {_0}")]
     InvalidMmRpcVersion(String),
 }
 
@@ -107,7 +109,9 @@ impl HttpStatusCode for DispatcherError {
 }
 
 impl From<serde_json::Error> for DispatcherError {
-    fn from(e: serde_json::Error) -> Self { DispatcherError::InvalidRequest(e.to_string()) }
+    fn from(e: serde_json::Error) -> Self {
+        DispatcherError::InvalidRequest(e.to_string())
+    }
 }
 
 #[allow(unused_macros)]
@@ -175,12 +179,25 @@ fn response_from_dispatcher_error(
     response.serialize_http_response()
 }
 
-async fn process_single_request(ctx: MmArc, req: Json, client: SocketAddr) -> Result<Response<Vec<u8>>, String> {
+async fn process_single_request(ctx: MmArc, mut req: Json, client: SocketAddr) -> Result<Response<Vec<u8>>, String> {
     let local_only = ctx.conf["rpc_local_only"].as_bool().unwrap_or(true);
     if req["mmrpc"].is_null() {
-        return dispatcher_legacy::process_single_request(ctx, req, client, local_only)
-            .await
-            .map_err(|e| ERRL!("{}", e));
+        match dispatcher_legacy::process_single_request(ctx.clone(), req.clone(), client, local_only).await {
+            Ok(t) => return Ok(t),
+
+            Err(dispatcher_legacy::LegacyRequestProcessError::NoMatch) => {
+                // Try the v2 implementation
+                req["mmrpc"] = json!("2.0");
+                info!(
+                    "Couldn't resolve '{}' RPC using the legacy API, trying v2 (mmrpc: 2.0) instead.",
+                    req["method"]
+                );
+            },
+
+            Err(e) => {
+                return ERR!("{}", e);
+            },
+        };
     }
 
     let id = req["id"].as_u64().map(|id| id as usize);

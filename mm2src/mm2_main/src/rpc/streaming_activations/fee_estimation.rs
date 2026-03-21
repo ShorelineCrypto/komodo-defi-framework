@@ -4,6 +4,7 @@ use super::{EnableStreamingRequest, EnableStreamingResponse};
 use coins::eth::fee_estimation::eth_fee_events::{EthFeeEventStreamer, EthFeeStreamingConfig};
 use coins::{lp_coinfind, MmCoin, MmCoinEnum};
 use common::HttpStatusCode;
+use derive_more::Display;
 use http::StatusCode;
 use mm2_core::mm_ctx::MmArc;
 use mm2_err_handle::{map_to_mm::MapToMmResult, mm_error::MmResult};
@@ -45,7 +46,7 @@ pub async fn enable_fee_estimation(
         .ok_or(FeeStreamingRequestError::CoinNotFound)?;
 
     match coin {
-        MmCoinEnum::EthCoin(coin) => {
+        MmCoinEnum::EthCoinVariant(coin) => {
             let eth_fee_estimator_streamer = EthFeeEventStreamer::new(req.config, coin.clone());
             ctx.event_stream_manager
                 .add(client_id, eth_fee_estimator_streamer, coin.spawner())

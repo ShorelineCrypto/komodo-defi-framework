@@ -5,7 +5,7 @@ use derive_more::Display;
 use futures::channel::oneshot;
 use futures::lock::Mutex as AsyncMutex;
 use mm2_err_handle::prelude::*;
-use mm2_event_stream::Event;
+use mm2_event_stream::{Event, StreamerId};
 use ser_error_derive::SerializeErrorType;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -15,8 +15,6 @@ use std::sync::Arc;
 use timed_map::{MapKind, TimedMap};
 
 use crate::mm_ctx::{MmArc, MmCtx};
-
-const EVENT_NAME: &str = "DATA_NEEDED";
 
 #[derive(Clone, Debug)]
 pub struct DataAsker {
@@ -37,10 +35,7 @@ impl Default for DataAsker {
 
 #[derive(Debug, Display)]
 pub enum AskForDataError {
-    #[display(
-        fmt = "Expected JSON data, but the received data (from data provider) was not deserializable: {:?}",
-        _0
-    )]
+    #[display(fmt = "Expected JSON data, but the received data (from data provider) was not deserializable: {_0:?}")]
     DeserializationError(serde_json::Error),
     Internal(String),
     Timeout,
@@ -81,8 +76,12 @@ impl MmCtx {
             "data": data
         });
 
-        self.event_stream_manager
-            .broadcast_all(Event::new(format!("{EVENT_NAME}:{data_type}"), input));
+        self.event_stream_manager.broadcast_all(Event::new(
+            StreamerId::DataNeeded {
+                data_type: data_type.to_string(),
+            },
+            input,
+        ));
 
         match receiver.timeout(timeout).await {
             Ok(Ok(response)) => match serde_json::from_value::<Output>(response) {
@@ -106,9 +105,9 @@ pub struct SendAskedDataRequest {
 #[derive(Debug, Display, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
 pub enum SendAskedDataError {
-    #[display(fmt = "No data was asked for id={}", _0)]
+    #[display(fmt = "No data was asked for id={_0}")]
     NotFound(usize),
-    #[display(fmt = "Internal error: {}", _0)]
+    #[display(fmt = "Internal error: {_0}")]
     Internal(String),
 }
 

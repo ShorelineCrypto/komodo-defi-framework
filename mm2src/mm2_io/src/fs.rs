@@ -30,7 +30,7 @@ pub fn invalid_data_err<Error>(msg: &str, err: Error) -> io::Error
 where
     Error: std::fmt::Display,
 {
-    io::Error::new(std::io::ErrorKind::InvalidData, format!("{}: {}", msg, err))
+    io::Error::new(std::io::ErrorKind::InvalidData, format!("{msg}: {err}"))
 }
 
 pub fn check_dir_operations(dir_path: &Path) -> Result<(), io::Error> {
@@ -45,13 +45,13 @@ pub fn check_dir_operations(dir_path: &Path) -> Result<(), io::Error> {
     if check.len() != r.len() {
         return Err(io::Error::new(
             std::io::ErrorKind::UnexpectedEof,
-            format!("Expected same data length when reading file: {:?}", fname),
+            format!("Expected same data length when reading file: {fname:?}"),
         ));
     }
     if check != r {
         return Err(io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("Expected the same {:?} data: {:?} != {:?}", fname, r, check),
+            format!("Expected the same {fname:?} data: {r:?} != {check:?}"),
         ));
     }
     Ok(())
@@ -78,7 +78,7 @@ pub fn ensure_file_is_writable(file_path: &Path) -> Result<(), String> {
         }
     } else {
         // try to open file in write append mode
-        if let Err(e) = fs::OpenOptions::new().write(true).append(true).open(file_path) {
+        if let Err(e) = fs::OpenOptions::new().append(true).open(file_path) {
             return ERR!(
                 "{} when trying to open the file {} in write mode",
                 e,
@@ -89,7 +89,9 @@ pub fn ensure_file_is_writable(file_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub fn slurp(path: &dyn AsRef<Path>) -> Result<Vec<u8>, String> { Ok(gstuff::slurp(path)) }
+pub fn slurp(path: &dyn AsRef<Path>) -> Result<Vec<u8>, String> {
+    Ok(gstuff::slurp(path))
+}
 
 pub fn safe_slurp(path: &dyn AsRef<Path>) -> Result<Vec<u8>, String> {
     let mut file = match fs::File::open(path) {
@@ -109,11 +111,6 @@ pub fn remove_file(path: &dyn AsRef<Path>) -> Result<(), String> {
 
 pub async fn remove_file_async<P: AsRef<Path>>(path: P) -> IoResult<()> {
     Ok(async_fs::remove_file(path.as_ref()).await?)
-}
-
-pub fn write(path: &dyn AsRef<Path>, contents: &dyn AsRef<[u8]>) -> Result<(), String> {
-    try_s!(fs::write(path, contents));
-    Ok(())
 }
 
 /// Read a folder asynchronously and return a list of files.
@@ -276,10 +273,86 @@ where
     read_files_with_extension(dir_path, "json").await
 }
 
+/// Creates all the directories along the path to a file if they do not exist.
+pub fn create_parents(path: &impl AsRef<Path>) -> IoResult<()> {
+    let parent_dir = path.as_ref().parent();
+    let Some(parent_dir) = parent_dir else {
+        return MmError::err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{} has no parent directory", path.as_ref().display()),
+        ));
+    };
+    match fs::metadata(parent_dir) {
+        // Path exists, make sure it's a directory (and not a file for example).
+        Ok(metadata) => {
+            if !metadata.is_dir() {
+                return MmError::err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("{} is not a directory", parent_dir.display()),
+                ));
+            }
+        },
+        // This path doesn't exist, create it.
+        Err(_) => fs::create_dir_all(parent_dir)?,
+    }
+    Ok(())
+}
+
+/// Similar to [`create_parents`], but using non-blocking async IO operations.
+///
+/// Creates all the directories along the path to a file if they do not exist.
+pub async fn create_parents_async(path: &Path) -> IoResult<()> {
+    let parent_dir = path.parent();
+    let Some(parent_dir) = parent_dir else {
+        return MmError::err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{} has no parent directory", path.display()),
+        ));
+    };
+    match async_fs::metadata(parent_dir).await {
+        // Path exists, make sure it's a directory (and not a file, for instance).
+        Ok(metadata) => {
+            if !metadata.is_dir() {
+                return MmError::err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("{} is not a directory", parent_dir.display()),
+                ));
+            }
+        },
+        // This path doesn't exist, try to create it.
+        Err(_) => async_fs::create_dir_all(parent_dir).await?,
+    }
+    Ok(())
+}
+
+/// Writes the `content` to the file at `path`.
+///
+/// This also creates any intermediary directories up to the file itself if they do not exist.
+/// If `use_tmp_file` is true, it writes to a temporary file first and then renames it to the final file name
+/// to ensure atomicity.
+pub fn write(path: &impl AsRef<Path>, content: &[u8], use_tmp_file: bool) -> IoResult<()> {
+    // Create all the directories in the path.
+    create_parents(path)?;
+    let path_tmp = if use_tmp_file {
+        PathBuf::from(format!("{}.tmp", path.as_ref().display()))
+    } else {
+        path.as_ref().to_path_buf()
+    };
+    // Write the file content into the temp file and then rename the temp file into the desired name.
+    fs::write(&path_tmp, content)?;
+    if use_tmp_file {
+        fs::rename(&path_tmp, path.as_ref()).error_log_passthrough()?
+    }
+    Ok(())
+}
+
 pub async fn write_json<T>(t: &T, path: &Path, use_tmp_file: bool) -> FsJsonResult<()>
 where
     T: Serialize,
 {
+    create_parents_async(path)
+        .await
+        .map_err(|err| FsJsonError::IoWriting(err.into_inner()))?;
     let content = json::to_vec(t).map_to_mm(FsJsonError::Serializing)?;
 
     let path_tmp = if use_tmp_file {

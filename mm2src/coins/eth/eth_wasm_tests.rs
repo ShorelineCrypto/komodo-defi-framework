@@ -2,7 +2,7 @@ use super::*;
 use crate::lp_coininit;
 use crypto::CryptoCtx;
 use mm2_core::mm_ctx::MmCtxBuilder;
-use mm2_test_helpers::for_tests::{ETH_SEPOLIA_NODES, ETH_SEPOLIA_SWAP_CONTRACT};
+use mm2_test_helpers::for_tests::{ETH_SEPOLIA_CHAIN_ID, ETH_SEPOLIA_NODES, ETH_SEPOLIA_SWAP_CONTRACT};
 use wasm_bindgen_test::*;
 use web_sys::console;
 
@@ -20,11 +20,12 @@ async fn init_eth_coin_helper() -> Result<(MmArc, MmCoinEnum), String> {
             "coin": "ETH",
             "name": "ethereum",
             "fname": "Ethereum",
-            "chain_id": 1337,
             "protocol":{
-                "type": "ETH"
+                "type": "ETH",
+                "protocol_data": {
+                    "chain_id": ETH_SEPOLIA_CHAIN_ID,
+                }
             },
-            "chain_id": 1,
             "rpcport": 80,
             "mm2": 1,
             "max_eth_tx_type": 2
@@ -46,7 +47,9 @@ async fn init_eth_coin_helper() -> Result<(MmArc, MmCoinEnum), String> {
 }
 
 #[wasm_bindgen_test]
-async fn test_init_eth_coin() { let (_ctx, _coin) = init_eth_coin_helper().await.unwrap(); }
+async fn test_init_eth_coin() {
+    let (_ctx, _coin) = init_eth_coin_helper().await.unwrap();
+}
 
 #[wasm_bindgen_test]
 async fn wasm_test_sign_eth_tx() {
@@ -63,7 +66,7 @@ async fn wasm_test_sign_eth_tx() {
     }))
     .unwrap();
     let res = coin.sign_raw_tx(&sign_req).await;
-    console::log_1(&format!("res={:?}", res).into());
+    console::log_1(&format!("res={res:?}").into());
     assert!(res.is_ok());
 }
 
@@ -87,7 +90,7 @@ async fn wasm_test_sign_eth_tx_with_priority_fee() {
     }))
     .unwrap();
     let res = coin.sign_raw_tx(&sign_req).await;
-    console::log_1(&format!("res={:?}", res).into());
+    console::log_1(&format!("res={res:?}").into());
     assert!(res.is_ok());
     let tx: UnverifiedTransactionWrapper = rlp::decode(&res.unwrap().tx_hex).expect("decoding signed tx okay");
     if !matches!(tx, UnverifiedTransactionWrapper::Eip1559(..)) {

@@ -3,7 +3,7 @@ use common::{http_uri_to_ws_address, log, PROXY_REQUEST_EXPIRATION_SEC};
 use futures::channel::oneshot;
 use futures_util::{SinkExt, StreamExt};
 use jsonrpc_core::{Id as RpcId, Params as RpcParams, Value as RpcValue, Version as RpcVersion};
-use mm2_event_stream::{Broadcaster, Event, EventStreamer, NoDataIn, StreamHandlerInput};
+use mm2_event_stream::{Broadcaster, Event, EventStreamer, NoDataIn, StreamHandlerInput, StreamerId};
 use mm2_number::BigDecimal;
 use proxy_signature::RawMessage;
 use std::collections::{HashMap, HashSet};
@@ -16,14 +16,20 @@ pub struct TendermintBalanceEventStreamer {
 }
 
 impl TendermintBalanceEventStreamer {
-    pub fn new(coin: TendermintCoin) -> Self { Self { coin } }
+    pub fn new(coin: TendermintCoin) -> Self {
+        Self { coin }
+    }
 }
 
 #[async_trait]
 impl EventStreamer for TendermintBalanceEventStreamer {
     type DataInType = NoDataIn;
 
-    fn streamer_id(&self) -> String { format!("BALANCE:{}", self.coin.ticker()) }
+    fn streamer_id(&self) -> StreamerId {
+        StreamerId::Balance {
+            coin: self.coin.ticker().to_string(),
+        }
+    }
 
     async fn handle(
         self,
@@ -76,14 +82,14 @@ impl EventStreamer for TendermintBalanceEventStreamer {
             };
 
             let receiver_q = generate_subscription_query(
-                format!("coin_received.receiver = '{}'", account_id),
+                format!("coin_received.receiver = '{account_id}'"),
                 client.proxy_sign_keypair(),
                 &client.uri(),
             );
             let receiver_q = tokio_tungstenite_wasm::Message::Text(receiver_q);
 
             let spender_q = generate_subscription_query(
-                format!("coin_spent.spender = '{}'", account_id),
+                format!("coin_spent.spender = '{account_id}'"),
                 client.proxy_sign_keypair(),
                 &client.uri(),
             );

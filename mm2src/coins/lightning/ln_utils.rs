@@ -8,10 +8,12 @@ use bitcoin::hash_types::BlockHash;
 use bitcoin_hashes::{sha256d, Hash};
 use common::executor::SpawnFuture;
 use common::log::LogState;
+use derive_more::Display;
 use lightning::chain::keysinterface::{InMemorySigner, KeysManager};
 use lightning::chain::{chainmonitor, BestBlock, ChannelMonitorUpdateStatus, Watch};
-use lightning::ln::channelmanager::{ChainParameters, ChannelManagerReadArgs, PaymentId, PaymentSendFailure,
-                                    SimpleArcChannelManager};
+use lightning::ln::channelmanager::{
+    ChainParameters, ChannelManagerReadArgs, PaymentId, PaymentSendFailure, SimpleArcChannelManager,
+};
 use lightning::routing::gossip::RoutingFees;
 use lightning::routing::router::{PaymentParameters, RouteHint, RouteHintHop, RouteParameters, Router as RouterTrait};
 use lightning::util::config::UserConfig;
@@ -22,7 +24,7 @@ use mm2_core::mm_ctx::MmArc;
 use std::collections::hash_map::Entry;
 use std::fs::File;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub const PAYMENT_RETRY_ATTEMPTS: usize = 5;
 
@@ -54,13 +56,15 @@ impl From<ElectrumBlockHeader> for RpcBestBlock {
 }
 
 #[inline]
-fn ln_data_dir(ctx: &MmArc, ticker: &str) -> PathBuf { ctx.dbdir().join("LIGHTNING").join(ticker) }
+fn ln_data_dir(ctx: &MmArc, platform_coin_address: &str, ticker: &str) -> PathBuf {
+    ctx.address_dir(platform_coin_address).join("LIGHTNING").join(ticker)
+}
 
 #[inline]
-fn ln_data_backup_dir(ctx: &MmArc, path: Option<String>, ticker: &str) -> Option<PathBuf> {
+fn ln_data_backup_dir(path: Option<String>, platform_coin_address: &str, ticker: &str) -> Option<PathBuf> {
     path.map(|p| {
         PathBuf::from(&p)
-            .join(hex::encode(ctx.rmd160().as_slice()))
+            .join(platform_coin_address)
             .join("LIGHTNING")
             .join(ticker)
     })
@@ -68,11 +72,12 @@ fn ln_data_backup_dir(ctx: &MmArc, path: Option<String>, ticker: &str) -> Option
 
 pub async fn init_persister(
     ctx: &MmArc,
+    platform_coin_address: &str,
     ticker: String,
     backup_path: Option<String>,
 ) -> EnableLightningResult<Arc<LightningFilesystemPersister>> {
-    let ln_data_dir = ln_data_dir(ctx, &ticker);
-    let ln_data_backup_dir = ln_data_backup_dir(ctx, backup_path, &ticker);
+    let ln_data_dir = ln_data_dir(ctx, platform_coin_address, &ticker);
+    let ln_data_backup_dir = ln_data_backup_dir(backup_path, platform_coin_address, &ticker);
     let persister = Arc::new(LightningFilesystemPersister::new(ln_data_dir, ln_data_backup_dir));
 
     let is_initialized = persister.is_fs_initialized().await?;
@@ -83,16 +88,15 @@ pub async fn init_persister(
     Ok(persister)
 }
 
-pub async fn init_db(ctx: &MmArc, ticker: String) -> EnableLightningResult<SqliteLightningDB> {
-    let db = SqliteLightningDB::new(
-        ticker,
-        ctx.sqlite_connection
-            .get()
-            .ok_or(MmError::new(EnableLightningError::DbError(
-                "sqlite_connection is not initialized".into(),
-            )))?
-            .clone(),
-    )?;
+pub async fn init_db(
+    ctx: &MmArc,
+    platform_coin_address: &str,
+    ticker: String,
+) -> EnableLightningResult<SqliteLightningDB> {
+    let conn = ctx
+        .address_db(platform_coin_address)
+        .map_err(|e| EnableLightningError::IOError(e.to_string()))?;
+    let db = SqliteLightningDB::new(ticker, Arc::new(Mutex::new(conn)))?;
 
     if !db.is_db_initialized().await? {
         db.init_db().await?;
@@ -108,7 +112,8 @@ pub fn init_keys_manager(platform: &Platform) -> EnableLightningResult<Arc<KeysM
         .coin
         .as_ref()
         .priv_key_policy
-        .activated_key_or_err()?
+        .activated_key_or_err()
+        .map_mm_err()?
         .private()
         .secret
         .into();
@@ -224,8 +229,7 @@ pub async fn init_channel_manager(
             {
                 let channel_id = hex::encode(funding_outpoint.to_channel_id());
                 return MmError::err(EnableLightningError::IOError(format!(
-                    "Failure to persist channel: {}!",
-                    channel_id
+                    "Failure to persist channel: {channel_id}!"
                 )));
             }
         }
@@ -344,22 +348,26 @@ pub(crate) fn filter_channels(channels: Vec<ChannelDetails>, min_inbound_capacit
 
 #[derive(Debug, Display)]
 pub enum PaymentError {
-    #[display(fmt = "Final cltv expiry delta {} is below the required minimum of {}", _0, _1)]
+    #[display(fmt = "Final cltv expiry delta {_0} is below the required minimum of {_1}")]
     CLTVExpiry(u32, u32),
-    #[display(fmt = "Error paying invoice: {}", _0)]
+    #[display(fmt = "Error paying invoice: {_0}")]
     Invoice(String),
-    #[display(fmt = "Keysend error: {}", _0)]
+    #[display(fmt = "Keysend error: {_0}")]
     Keysend(String),
-    #[display(fmt = "DB error {}", _0)]
+    #[display(fmt = "DB error {_0}")]
     DbError(String),
 }
 
 impl From<SqlError> for PaymentError {
-    fn from(err: SqlError) -> PaymentError { PaymentError::DbError(err.to_string()) }
+    fn from(err: SqlError) -> PaymentError {
+        PaymentError::DbError(err.to_string())
+    }
 }
 
 impl From<InvoicePaymentError> for PaymentError {
-    fn from(err: InvoicePaymentError) -> PaymentError { PaymentError::Invoice(format!("{:?}", err)) }
+    fn from(err: InvoicePaymentError) -> PaymentError {
+        PaymentError::Invoice(format!("{err:?}"))
+    }
 }
 
 // Todo: This is imported from rust-lightning and modified by me, will need to open a PR there with this modification and update the dependency to remove this code and the code it depends on.

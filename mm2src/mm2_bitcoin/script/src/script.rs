@@ -81,31 +81,47 @@ pub struct Script {
 }
 
 impl From<&'static str> for Script {
-    fn from(s: &'static str) -> Self { Script::new(s.into()) }
+    fn from(s: &'static str) -> Self {
+        Script::new(s.into())
+    }
 }
 
 impl From<Bytes> for Script {
-    fn from(s: Bytes) -> Self { Script::new(s) }
+    fn from(s: Bytes) -> Self {
+        Script::new(s)
+    }
 }
 
 impl From<Vec<u8>> for Script {
-    fn from(v: Vec<u8>) -> Self { Script::new(v.into()) }
+    fn from(v: Vec<u8>) -> Self {
+        Script::new(v.into())
+    }
 }
 
 impl From<Script> for Bytes {
-    fn from(script: Script) -> Self { script.data }
+    fn from(script: Script) -> Self {
+        script.data
+    }
 }
 
 impl Script {
     /// Script constructor.
-    pub fn new(data: Bytes) -> Self { Script { data } }
+    pub fn new(data: Bytes) -> Self {
+        Script { data }
+    }
 
-    pub fn to_bytes(&self) -> Bytes { self.data.clone() }
+    pub fn to_bytes(&self) -> Bytes {
+        self.data.clone()
+    }
 
-    pub fn as_slice(&self) -> &[u8] { self.data.as_slice() }
+    pub fn as_slice(&self) -> &[u8] {
+        self.data.as_slice()
+    }
 
     /// Is empty script
-    pub fn is_empty(&self) -> bool { self.data.len() == 0 }
+    pub fn is_empty(&self) -> bool {
+        self.data.len() == 0
+    }
 
     /// Extra-fast test for pay-to-public-key-hash (P2PKH) scripts.
     pub fn is_pay_to_public_key_hash(&self) -> bool {
@@ -214,7 +230,9 @@ impl Script {
         !self.data.is_empty() && self.data[0] == Opcode::OP_RETURN as u8 && self.subscript(1).is_push_only()
     }
 
-    pub fn subscript(&self, from: usize) -> Script { self.data[from..].to_vec().into() }
+    pub fn subscript(&self, from: usize) -> Script {
+        self.data[from..].to_vec().into()
+    }
 
     pub fn find_and_delete(&self, data: &[u8]) -> Script {
         let mut result = Vec::new();
@@ -243,13 +261,13 @@ impl Script {
         Opcode::from_u8(self.data[position]).ok_or(Error::BadOpcode)
     }
 
-    pub fn get_instruction(&self, index: usize) -> Option<Result<Instruction, Error>> {
+    pub fn get_instruction(&self, index: usize) -> Option<Result<Instruction<'_>, Error>> {
         self.iter()
             .enumerate()
             .find_map(|(idx, instr)| if idx == index { Some(instr) } else { None })
     }
 
-    pub fn get_instruction_at(&self, position: usize) -> Result<Instruction, Error> {
+    pub fn get_instruction_at(&self, position: usize) -> Result<Instruction<'_>, Error> {
         let opcode = self.get_opcode(position)?;
         let instruction = match opcode {
             Opcode::OP_PUSHDATA1 | Opcode::OP_PUSHDATA2 | Opcode::OP_PUSHDATA4 => {
@@ -358,14 +376,14 @@ impl Script {
         }
     }
 
-    pub fn iter(&self) -> Instructions {
+    pub fn iter(&self) -> Instructions<'_> {
         Instructions {
             position: 0,
             script: self,
         }
     }
 
-    pub fn opcodes(&self) -> Opcodes {
+    pub fn opcodes(&self) -> Opcodes<'_> {
         Opcodes {
             position: 0,
             script: self,
@@ -513,6 +531,27 @@ impl Script {
 
         script.sigops_count(true)
     }
+
+    /// Extracts the signature from a scriptSig at instruction 0.
+    ///
+    /// Usable for P2PK and P2PKH scripts.
+    pub fn extract_signature(&self) -> Result<Vec<u8>, String> {
+        match self.get_instruction(0) {
+            Some(Ok(instruction)) => match instruction.data {
+                Some(bytes) if !bytes.is_empty() => Ok(bytes.to_vec()),
+                Some(_) | None => Err(format!("No data at instruction 0 of script {self:?}")),
+            },
+            Some(Err(e)) => Err(format!("Error {e} on getting instruction 0 of script {self:?}")),
+            None => Err(format!("None instruction 0 of script {self:?}")),
+        }
+    }
+
+    /// Checks if a scriptSig is a script that spends a P2PK output.
+    pub fn does_script_spend_p2pk(&self) -> bool {
+        // P2PK scriptSig is just a single signature. The script should consist of a single push bytes
+        // instruction with the data as the signature.
+        self.extract_signature().is_ok() && self.get_instruction(1).is_none()
+    }
 }
 
 pub struct Instructions<'a> {
@@ -547,7 +586,7 @@ impl<'a> Iterator for Instructions<'a> {
     }
 }
 
-impl<'a> Iterator for Opcodes<'a> {
+impl Iterator for Opcodes<'_> {
     type Item = Result<Opcode, Error>;
 
     fn next(&mut self) -> Option<Result<Opcode, Error>> {
@@ -569,7 +608,9 @@ impl<'a> Iterator for Opcodes<'a> {
 impl ops::Deref for Script {
     type Target = [u8];
 
-    fn deref(&self) -> &Self::Target { &self.data }
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
 }
 
 pub struct Instruction<'a> {
@@ -672,7 +713,7 @@ mod tests {
             .into_script();
         let s = "Script { data: 0103010293 }";
         let mut res = String::new();
-        write!(&mut res, "{:?}", script).unwrap();
+        write!(&mut res, "{script:?}").unwrap();
         assert_eq!(s.to_string(), res);
     }
 
@@ -944,7 +985,7 @@ OP_ADD
         assert!(script.get_instruction(5).is_none());
         assert!(script.get_instruction(10).is_none());
         assert!(script.get_instruction(1245).is_none());
-        assert!(script.get_instruction(99187829973).is_none());
+        assert!(script.get_instruction(99187829).is_none());
     }
 
     #[test]
@@ -970,5 +1011,14 @@ OP_ADD
             max_idx = idx;
         }
         assert_eq!(max_idx, 3);
+    }
+
+    #[test]
+    fn test_does_script_spend_p2pk() {
+        let script_sig = Script::from("473044022071edae37cf518e98db3f7637b9073a7a980b957b0c7b871415dbb4898ec3ebdc022031b402a6b98e64ffdf752266449ca979a9f70144dba77ed7a6a25bfab11648f6012103ad6f89abc2e5beaa8a3ac28e22170659b3209fe2ddf439681b4b8f31508c36fa");
+        assert!(!script_sig.does_script_spend_p2pk());
+        // The scriptSig of the input spent from: https://mempool.space/tx/1db6251a9afce7025a2061a19e63c700dffc3bec368bd1883decfac353357a9d
+        let script_sig = Script::from("483045022078e86c021003cca23842d4b2862dfdb68d2478a98c08c10dcdffa060e55c72be022100f6a41da12cdc2e350045f4c97feeab76a7c0ab937bd8a9e507293ce6d37c9cc201");
+        assert!(script_sig.does_script_spend_p2pk());
     }
 }

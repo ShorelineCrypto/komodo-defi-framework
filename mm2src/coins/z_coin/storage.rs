@@ -1,21 +1,23 @@
 use crate::z_coin::{ValidateBlocksError, ZcoinConsensusParams, ZcoinStorageError};
 use mm2_event_stream::StreamingManager;
 
-pub mod blockdb;
-pub use blockdb::*;
+pub(crate) mod blockdb;
+pub(crate) use blockdb::*;
 
-pub mod walletdb;
-#[cfg(target_arch = "wasm32")] mod z_params;
+pub(crate) mod walletdb;
+pub(crate) use walletdb::*;
+
+pub(crate) mod z_locked_notes;
+pub(crate) use z_locked_notes::{LockedNotesStorage, LockedNotesStorageError};
+
+#[cfg(target_arch = "wasm32")]
+mod z_params;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use z_params::ZcashParamsWasmImpl;
-
-pub use walletdb::*;
 
 use mm2_err_handle::mm_error::MmResult;
 #[cfg(target_arch = "wasm32")]
 use walletdb::wasm::storage::DataConnStmtCacheWasm;
-#[cfg(debug_assertions)]
-use zcash_client_backend::data_api::error::Error;
 use zcash_client_backend::data_api::PrunedBlock;
 use zcash_client_backend::proto::compact_formats::CompactBlock;
 use zcash_client_backend::wallet::{AccountId, WalletTx};
@@ -41,15 +43,23 @@ pub struct DataConnStmtCacheWrapper {
 
 impl DataConnStmtCacheWrapper {
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn new(cache: DataConnStmtCacheAsync<ZcoinConsensusParams>) -> Self { Self { cache } }
+    pub fn new(cache: DataConnStmtCacheAsync<ZcoinConsensusParams>) -> Self {
+        Self { cache }
+    }
     #[cfg(target_arch = "wasm32")]
-    pub fn new(cache: DataConnStmtCacheWasm) -> Self { Self { cache } }
+    pub fn new(cache: DataConnStmtCacheWasm) -> Self {
+        Self { cache }
+    }
     #[cfg(not(target_arch = "wasm32"))]
     #[inline]
-    pub fn inner(&self) -> &DataConnStmtCacheAsync<ZcoinConsensusParams> { &self.cache }
+    pub fn inner(&self) -> &DataConnStmtCacheAsync<ZcoinConsensusParams> {
+        &self.cache
+    }
     #[cfg(target_arch = "wasm32")]
     #[inline]
-    pub fn inner(&self) -> &DataConnStmtCacheWasm { &self.cache }
+    pub fn inner(&self) -> &DataConnStmtCacheWasm {
+        &self.cache
+    }
 }
 
 pub struct CompactBlockRow {
@@ -118,6 +128,7 @@ pub async fn scan_cached_block(
     data: &DataConnStmtCacheWrapper,
     params: &ZcoinConsensusParams,
     block: &CompactBlock,
+    locked_notes_db: &LockedNotesStorage,
     last_height: &mut BlockHeight,
 ) -> Result<Vec<WalletTx<Nullifier>>, ValidateBlocksError> {
     let mut data_guard = data.inner().clone();
@@ -159,7 +170,6 @@ pub async fn scan_cached_block(
 
     // To enforce that all roots match,
     // see -> https://github.com/KomodoPlatform/librustzcash/blob/e92443a7bbd1c5e92e00e6deb45b5a33af14cea4/zcash_client_backend/src/data_api/chain.rs#L304-L326
-
     let new_witnesses = data_guard
         .advance_by_block(
             &(PrunedBlock {
@@ -185,6 +195,16 @@ pub async fn scan_cached_block(
 
     witnesses.extend(new_witnesses);
     *last_height = current_height;
+
+    // TODO: Execute updates to `locked_notes_db` and `wallet_db` in a single transaction.
+    // This will be possible with a newer librustzcash that supports both spent notes and unconfirmed change tracking.
+    // See: https://github.com/KomodoPlatform/komodo-defi-framework/pull/2331#pullrequestreview-2883773336
+    for tx in &txs {
+        locked_notes_db
+            .remove_notes_for_txid(tx.txid.to_string())
+            .await
+            .map_err(|err| ValidateBlocksError::DbError(err.to_string()))?;
+    }
 
     Ok(txs)
 }

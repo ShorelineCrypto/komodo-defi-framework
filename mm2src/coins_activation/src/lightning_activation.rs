@@ -1,6 +1,8 @@
 use crate::context::CoinsActivationContext;
-use crate::l2::{InitL2ActivationOps, InitL2Error, InitL2InitialStatus, InitL2TaskHandleShared,
-                InitL2TaskManagerShared, L2ProtocolParams};
+use crate::l2::{
+    InitL2ActivationOps, InitL2Error, InitL2InitialStatus, InitL2TaskHandleShared, InitL2TaskManagerShared,
+    L2ProtocolParams,
+};
 use crate::prelude::*;
 use async_trait::async_trait;
 use coins::coin_errors::MyAddressError;
@@ -10,8 +12,10 @@ use coins::lightning::ln_events::{init_abortable_events, LightningEventHandler};
 use coins::lightning::ln_p2p::{connect_to_ln_nodes_loop, init_peer_manager, ln_node_announcement_loop};
 use coins::lightning::ln_platform::Platform;
 use coins::lightning::ln_storage::LightningStorage;
-use coins::lightning::ln_utils::{get_open_channels_nodes_addresses, init_channel_manager, init_db, init_keys_manager,
-                                 init_persister, PAYMENT_RETRY_ATTEMPTS};
+use coins::lightning::ln_utils::{
+    get_open_channels_nodes_addresses, init_channel_manager, init_db, init_keys_manager, init_persister,
+    PAYMENT_RETRY_ATTEMPTS,
+};
 use coins::lightning::{InvoicePayer, LightningCoin};
 use coins::utxo::utxo_standard::UtxoStandardCoin;
 use coins::utxo::UtxoCommonOps;
@@ -20,7 +24,7 @@ use common::executor::{SpawnFuture, Timer};
 use crypto::hw_rpc_task::{HwRpcTaskAwaitingStatus, HwRpcTaskUserAction};
 use derive_more::Display;
 use futures::compat::Future01CompatExt;
-use lightning::chain::keysinterface::KeysInterface;
+use lightning::chain::keysinterface::{KeysInterface, Recipient};
 use lightning::chain::Access;
 use lightning::routing::gossip;
 use lightning::routing::router::DefaultRouter;
@@ -29,6 +33,7 @@ use lightning_invoice::payment;
 use mm2_core::mm_ctx::MmArc;
 use mm2_err_handle::prelude::*;
 use parking_lot::Mutex as PaMutex;
+use secp256k1::Secp256k1;
 use ser_error_derive::SerializeErrorType;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::{self as json, Value as Json};
@@ -59,7 +64,9 @@ pub enum LightningInProgressStatus {
 }
 
 impl InitL2InitialStatus for LightningInProgressStatus {
-    fn initial_status() -> Self { LightningInProgressStatus::ActivatingCoin }
+    fn initial_status() -> Self {
+        LightningInProgressStatus::ActivatingCoin
+    }
 }
 
 impl TryPlatformCoinFromMmCoinEnum for UtxoStandardCoin {
@@ -68,7 +75,7 @@ impl TryPlatformCoinFromMmCoinEnum for UtxoStandardCoin {
         Self: Sized,
     {
         match coin {
-            MmCoinEnum::UtxoCoin(coin) => Some(coin),
+            MmCoinEnum::UtxoCoinVariant(coin) => Some(coin),
             _ => None,
         }
     }
@@ -95,7 +102,9 @@ impl TryFromCoinProtocol for LightningProtocolConf {
 }
 
 impl L2ProtocolParams for LightningProtocolConf {
-    fn platform_coin_ticker(&self) -> &str { &self.platform_coin_ticker }
+    fn platform_coin_ticker(&self) -> &str {
+        &self.platform_coin_ticker
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -131,13 +140,13 @@ pub struct LightningValidatedParams {
 #[derive(Clone, Debug, Deserialize, Display, Serialize, SerializeErrorType)]
 #[serde(tag = "error_type", content = "error_data")]
 pub enum LightningValidationErr {
-    #[display(fmt = "Platform coin {} activated in {} mode", _0, _1)]
+    #[display(fmt = "Platform coin {_0} activated in {_1} mode")]
     UnexpectedMethod(String, String),
-    #[display(fmt = "{} is only supported in {} mode", _0, _1)]
+    #[display(fmt = "{_0} is only supported in {_1} mode")]
     UnsupportedMode(String, String),
-    #[display(fmt = "Invalid request: {}", _0)]
+    #[display(fmt = "Invalid request: {_0}")]
     InvalidRequest(String),
-    #[display(fmt = "Invalid address: {}", _0)]
+    #[display(fmt = "Invalid address: {_0}")]
     InvalidAddress(String),
 }
 
@@ -155,7 +164,7 @@ pub enum LightningInitError {
         ticker: String,
     },
     InvalidConfiguration(String),
-    #[display(fmt = "Error while validating {} configuration: {}", platform_coin_ticker, err)]
+    #[display(fmt = "Error while validating {platform_coin_ticker} configuration: {err}")]
     InvalidPlatformConfiguration {
         platform_coin_ticker: String,
         err: String,
@@ -168,7 +177,9 @@ pub enum LightningInitError {
 }
 
 impl From<MyAddressError> for LightningInitError {
-    fn from(err: MyAddressError) -> Self { Self::MyAddressError(err.to_string()) }
+    fn from(err: MyAddressError) -> Self {
+        Self::MyAddressError(err.to_string())
+    }
 }
 
 impl From<LightningInitError> for InitL2Error {
@@ -199,11 +210,15 @@ impl From<LightningInitError> for InitL2Error {
 }
 
 impl From<EnableLightningError> for LightningInitError {
-    fn from(err: EnableLightningError) -> Self { LightningInitError::EnableLightningError(err) }
+    fn from(err: EnableLightningError) -> Self {
+        LightningInitError::EnableLightningError(err)
+    }
 }
 
 impl From<LightningValidationErr> for LightningInitError {
-    fn from(err: LightningValidationErr) -> Self { LightningInitError::LightningValidationErr(err) }
+    fn from(err: LightningValidationErr) -> Self {
+        LightningInitError::LightningValidationErr(err)
+    }
 }
 
 impl From<RegisterCoinError> for LightningInitError {
@@ -276,7 +291,8 @@ impl InitL2ActivationOps for LightningCoin {
             activation_params.color.unwrap_or_else(|| "000000".into()),
             &mut node_color as &mut [u8],
         )
-        .map_to_mm(|_| LightningValidationErr::InvalidRequest("Invalid Hex Color".into()))?;
+        .map_to_mm(|_| LightningValidationErr::InvalidRequest("Invalid Hex Color".into()))
+        .map_mm_err()?;
 
         let listening_port = activation_params.listening_port.unwrap_or(DEFAULT_LISTENING_PORT);
 
@@ -305,10 +321,11 @@ impl InitL2ActivationOps for LightningCoin {
             validated_params,
             task_handle,
         )
-        .await?;
+        .await
+        .map_mm_err()?;
         Timer::sleep(10.).await;
 
-        let address = lightning_coin.my_address()?;
+        let address = lightning_coin.my_address().map_mm_err()?;
         let balance = lightning_coin
             .my_balance()
             .compat()
@@ -344,20 +361,29 @@ async fn start_lightning(
         protocol_conf.network.clone(),
         protocol_conf.confirmation_targets,
     )?);
-    task_handle.update_in_progress_status(LightningInProgressStatus::GettingFeesFromRPC)?;
-    platform.set_latest_fees().await?;
+    task_handle
+        .update_in_progress_status(LightningInProgressStatus::GettingFeesFromRPC)
+        .map_mm_err()?;
+    platform.set_latest_fees().await.map_mm_err()?;
 
     // Initialize the Logger
     let logger = ctx.log.0.clone();
 
-    // Initialize Persister
-    let persister = init_persister(ctx, conf.ticker.clone(), params.backup_path).await?;
-
     // Initialize the KeysManager
     let keys_manager = init_keys_manager(&platform)?;
+    let node_id = keys_manager
+        .get_node_secret(Recipient::Node)
+        .map_err(|e| EnableLightningError::Internal(format!("Error while getting node id: {e:?}")))?
+        .public_key(&Secp256k1::new());
+    let node_id = node_id.to_string();
+
+    // Initialize Persister
+    let persister = init_persister(ctx, &node_id, conf.ticker.clone(), params.backup_path).await?;
 
     // Initialize the P2PGossipSync. This is used for providing routes to send payments over
-    task_handle.update_in_progress_status(LightningInProgressStatus::ReadingNetworkGraphFromFile)?;
+    task_handle
+        .update_in_progress_status(LightningInProgressStatus::ReadingNetworkGraphFromFile)
+        .map_mm_err()?;
     let network_graph = Arc::new(
         persister
             .get_network_graph(protocol_conf.network.into(), logger.clone())
@@ -371,10 +397,12 @@ async fn start_lightning(
     ));
 
     // Initialize DB
-    let db = init_db(ctx, conf.ticker.clone()).await?;
+    let db = init_db(ctx, &node_id, conf.ticker.clone()).await?;
 
     // Initialize the ChannelManager
-    task_handle.update_in_progress_status(LightningInProgressStatus::InitializingChannelManager)?;
+    task_handle
+        .update_in_progress_status(LightningInProgressStatus::InitializingChannelManager)
+        .map_mm_err()?;
     let (chain_monitor, channel_manager) = init_channel_manager(
         platform.clone(),
         logger.clone(),
@@ -386,7 +414,9 @@ async fn start_lightning(
     .await?;
 
     // Initialize the PeerManager
-    task_handle.update_in_progress_status(LightningInProgressStatus::InitializingPeerManager)?;
+    task_handle
+        .update_in_progress_status(LightningInProgressStatus::InitializingPeerManager)
+        .map_mm_err()?;
     let peer_manager = init_peer_manager(
         ctx.clone(),
         &platform,
@@ -412,7 +442,9 @@ async fn start_lightning(
     ));
 
     // Initialize routing Scorer
-    task_handle.update_in_progress_status(LightningInProgressStatus::ReadingScorerFromFile)?;
+    task_handle
+        .update_in_progress_status(LightningInProgressStatus::ReadingScorerFromFile)
+        .map_mm_err()?;
     // status_notifier
     //     .try_send(LightningInProgressStatus::ReadingScorerFromFile)
     //     .debug_log_with_msg("No one seems interested in LightningInProgressStatus");
@@ -445,7 +477,9 @@ async fn start_lightning(
     // InvoicePayer will act as our event handler as it handles some of the payments related events before
     // delegating it to LightningEventHandler.
     // note: background_processor stops automatically when dropped since BackgroundProcessor implements the Drop trait.
-    task_handle.update_in_progress_status(LightningInProgressStatus::InitializingBackgroundProcessor)?;
+    task_handle
+        .update_in_progress_status(LightningInProgressStatus::InitializingBackgroundProcessor)
+        .map_mm_err()?;
     let background_processor = Arc::new(BackgroundProcessor::start(
         persister.clone(),
         invoice_payer.clone(),
@@ -458,7 +492,9 @@ async fn start_lightning(
     ));
 
     // If channel_nodes_data file exists, read channels nodes data from disk and reconnect to channel nodes/peers if possible.
-    task_handle.update_in_progress_status(LightningInProgressStatus::ReadingChannelsAddressesFromFile)?;
+    task_handle
+        .update_in_progress_status(LightningInProgressStatus::ReadingChannelsAddressesFromFile)
+        .map_mm_err()?;
     let open_channels_nodes = Arc::new(PaMutex::new(
         get_open_channels_nodes_addresses(persister.clone(), channel_manager.clone()).await?,
     ));

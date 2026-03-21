@@ -4,15 +4,17 @@ use gstuff::now_float;
 use mm2_err_handle::prelude::*;
 use std::path::{Path, PathBuf};
 
+use crate::fs::create_parents;
+
 pub type FileLockResult<T> = std::result::Result<T, MmError<FileLockError>>;
 
 #[derive(Debug, Display)]
 pub enum FileLockError {
-    #[display(fmt = "Error reading timestamp from {:?}: {}", path, error)]
+    #[display(fmt = "Error reading timestamp from {path:?}: {error}")]
     ErrorReadingTimestamp { path: PathBuf, error: String },
-    #[display(fmt = "Error writing timestamp to {:?}: {}", path, error)]
+    #[display(fmt = "Error writing timestamp to {path:?}: {error}")]
     ErrorWritingTimestamp { path: PathBuf, error: String },
-    #[display(fmt = "Error creating {:?}: {}", path, error)]
+    #[display(fmt = "Error creating {path:?}: {error}")]
     ErrorCreatingLockFile { path: PathBuf, error: String },
 }
 
@@ -45,6 +47,10 @@ fn read_timestamp(path: &dyn AsRef<Path>) -> FileLockResult<Option<u64>> {
 
 impl<T: AsRef<Path>> FileLock<T> {
     pub fn lock(lock_path: T, ttl_sec: f64) -> FileLockResult<Option<FileLock<T>>> {
+        create_parents(&lock_path.as_ref()).map_err(|e| FileLockError::ErrorCreatingLockFile {
+            path: lock_path.as_ref().to_path_buf(),
+            error: e.to_string(),
+        })?;
         match std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -81,11 +87,15 @@ impl<T: AsRef<Path>> FileLock<T> {
         }
     }
 
-    pub fn touch(&self) -> FileLockResult<()> { touch(&self.lock_path, now_sec()) }
+    pub fn touch(&self) -> FileLockResult<()> {
+        touch(&self.lock_path, now_sec())
+    }
 }
 
 impl<T: AsRef<Path>> Drop for FileLock<T> {
-    fn drop(&mut self) { let _ = std::fs::remove_file(&self.lock_path); }
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.lock_path);
+    }
 }
 
 #[cfg(test)]
