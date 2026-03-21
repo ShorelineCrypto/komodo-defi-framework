@@ -2,6 +2,7 @@ use super::eth_fee_events::EstimatorType;
 use super::ser::FeePerGasEstimated;
 use crate::{lp_coinfind, MmCoinEnum};
 use common::HttpStatusCode;
+use derive_more::Display;
 use mm2_core::mm_ctx::MmArc;
 use mm2_err_handle::mm_error::{MmError, MmResult};
 
@@ -37,7 +38,7 @@ pub async fn get_eth_estimated_fee_per_gas(
     req: GetFeeEstimationRequest,
 ) -> MmResult<FeePerGasEstimated, GetFeeEstimationRequestError> {
     match lp_coinfind(&ctx, &req.coin).await {
-        Ok(Some(MmCoinEnum::EthCoin(coin))) => {
+        Ok(Some(MmCoinEnum::EthCoinVariant(coin))) => {
             let use_simple = matches!(req.estimator_type, EstimatorType::Simple);
             let fee = coin
                 .get_eip1559_gas_fee(use_simple)

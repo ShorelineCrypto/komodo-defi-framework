@@ -1,6 +1,6 @@
 use std::any::{self, Any};
 
-use crate::{Event, StreamingManager};
+use crate::{Event, StreamerId, StreamingManager};
 use common::executor::{abortable_queue::WeakSpawner, AbortSettings, SpawnAbortable};
 use common::log::{error, info};
 
@@ -25,7 +25,7 @@ where
 
     /// Returns a human readable unique identifier for the event streamer.
     /// No other event streamer should have the same identifier.
-    fn streamer_id(&self) -> String;
+    fn streamer_id(&self) -> StreamerId;
 
     /// Event handler that is responsible for broadcasting event data to the streaming channels.
     ///
@@ -37,6 +37,25 @@ where
         ready_tx: oneshot::Sender<Result<(), String>>,
         data_rx: impl StreamHandlerInput<Self::DataInType>,
     );
+}
+
+/// Trait for types that can produce a unique [`StreamerId`] for event streaming.
+///
+/// Used to standardize initialization and ID derivation for various streamers.
+///
+/// - `'a`: Lifetime for borrowed derive parameters.
+pub trait DeriveStreamerId<'a> {
+    /// Type used to create the instance.
+    type InitParam;
+
+    /// Borrowed type used to derive the [`StreamerId`].
+    type DeriveParam: 'a;
+
+    /// Creates a new instance using the specified initialization parameter.
+    fn new(param: Self::InitParam) -> Self;
+
+    /// Derives a unique [`StreamerId`] based on the provided parameter.
+    fn derive_streamer_id(param: Self::DeriveParam) -> StreamerId;
 }
 
 /// Spawns the [`EventStreamer::handle`] in a separate task using [`WeakSpawner`].
@@ -109,9 +128,13 @@ where
 pub struct Broadcaster(StreamingManager);
 
 impl Broadcaster {
-    pub fn new(inner: StreamingManager) -> Self { Self(inner) }
+    pub fn new(inner: StreamingManager) -> Self {
+        Self(inner)
+    }
 
-    pub fn broadcast(&self, event: Event) { self.0.broadcast(event); }
+    pub fn broadcast(&self, event: Event) {
+        self.0.broadcast(event);
+    }
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -129,7 +152,11 @@ pub mod test_utils {
     impl EventStreamer for PeriodicStreamer {
         type DataInType = NoDataIn;
 
-        fn streamer_id(&self) -> String { "periodic_streamer".to_string() }
+        fn streamer_id(&self) -> StreamerId {
+            StreamerId::ForTesting {
+                test_streamer: "periodic_streamer".to_string(),
+            }
+        }
 
         async fn handle(
             self,
@@ -152,7 +179,11 @@ pub mod test_utils {
     impl EventStreamer for ReactiveStreamer {
         type DataInType = String;
 
-        fn streamer_id(&self) -> String { "reactive_streamer".to_string() }
+        fn streamer_id(&self) -> StreamerId {
+            StreamerId::ForTesting {
+                test_streamer: "reactive_streamer".to_string(),
+            }
+        }
 
         async fn handle(
             self,
@@ -175,7 +206,11 @@ pub mod test_utils {
     impl EventStreamer for InitErrorStreamer {
         type DataInType = NoDataIn;
 
-        fn streamer_id(&self) -> String { "init_error_streamer".to_string() }
+        fn streamer_id(&self) -> StreamerId {
+            StreamerId::ForTesting {
+                test_streamer: "init_error_streamer".to_string(),
+            }
+        }
 
         async fn handle(
             self,

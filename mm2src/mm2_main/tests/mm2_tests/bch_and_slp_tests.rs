@@ -2,11 +2,14 @@ use common::custom_futures::repeatable::{Ready, Retry};
 use common::{block_on, log, repeatable};
 use http::StatusCode;
 use itertools::Itertools;
-use mm2_test_helpers::for_tests::{electrum_servers_rpc, enable_bch_with_tokens, enable_slp, my_tx_history_v2,
-                                  sign_message, tbch_for_slp_conf, tbch_usdf_conf, verify_message, MarketMakerIt,
-                                  Mm2TestConf, UtxoRpcMode, T_BCH_ELECTRUMS};
-use mm2_test_helpers::structs::{Bip44Chain, EnableBchWithTokensResponse, HDAccountAddressId, RpcV2Response,
-                                SignatureResponse, StandardHistoryV2Res, UtxoFeeDetails, VerificationResponse};
+use mm2_test_helpers::for_tests::{
+    electrum_servers_rpc, enable_bch_with_tokens, enable_slp, my_tx_history_v2, sign_message, tbch_for_slp_conf,
+    tbch_usdf_conf, verify_message, MarketMakerIt, Mm2TestConf, UtxoRpcMode, T_BCH_ELECTRUMS,
+};
+use mm2_test_helpers::structs::{
+    Bip44Chain, EnableBchWithTokensResponse, HDAccountAddressId, RpcV2Response, SignatureResponse,
+    StandardHistoryV2Res, UtxoFeeDetails, VerificationResponse,
+};
 use serde_json::{self as json, json, Value as Json};
 use std::env;
 
@@ -34,6 +37,7 @@ fn test_withdraw_cashaddresses() {
             "coins": coins,
             "i_am_seed": true,
             "rpc_password": "pass",
+            "is_bootstrap_node": true
         }),
         "pass".into(),
         None,
@@ -238,6 +242,7 @@ fn test_withdraw_to_different_cashaddress_network_should_fail() {
             "coins": coins,
             "i_am_seed": true,
             "rpc_password": "pass",
+            "is_bootstrap_node": true
         }),
         "pass".into(),
         None,
@@ -299,6 +304,7 @@ fn test_common_cashaddresses() {
             "coins": coins,
             "i_am_seed": true,
             "rpc_password": "pass",
+            "is_bootstrap_node": true
         }),
         "pass".into(),
         None,
@@ -473,7 +479,9 @@ async fn test_bch_and_slp_testnet_history_impl() {
 
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
-fn test_bch_and_slp_testnet_history() { block_on(test_bch_and_slp_testnet_history_impl()); }
+fn test_bch_and_slp_testnet_history() {
+    block_on(test_bch_and_slp_testnet_history_impl());
+}
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen_test]
@@ -502,6 +510,7 @@ fn test_sign_verify_message_bch() {
             "coins": coins,
             "i_am_seed": true,
             "rpc_password": "pass",
+            "is_bootstrap_node": true
         }),
         "pass".into(),
         None,
@@ -529,7 +538,7 @@ fn test_sign_verify_message_bch() {
     let electrum: Json = json::from_str(&electrum.1).unwrap();
     log!("{:?}", electrum);
 
-    let response = block_on(sign_message(&mm, "BCH"));
+    let response = block_on(sign_message(&mm, "BCH", None));
     let response: RpcV2Response<SignatureResponse> = json::from_value(response).unwrap();
     let response = response.result;
 
@@ -571,6 +580,7 @@ fn test_sign_verify_message_slp() {
             "coins": coins,
             "i_am_seed": true,
             "rpc_password": "pass",
+            "is_bootstrap_node": true
         }),
         "pass".into(),
         None,
@@ -586,7 +596,7 @@ fn test_sign_verify_message_slp() {
     let enable_usdf = block_on(enable_slp(&mm, "USDF"));
     log!("enable_usdf: {:?}", enable_usdf);
 
-    let response = block_on(sign_message(&mm, "USDF"));
+    let response = block_on(sign_message(&mm, "USDF", None));
     let response: RpcV2Response<SignatureResponse> = json::from_value(response).unwrap();
     let response = response.result;
 

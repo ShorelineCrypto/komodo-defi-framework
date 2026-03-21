@@ -18,11 +18,12 @@ use mm2_metrics::{MetricType, MetricsJson};
 use mm2_number::BigDecimal;
 use mm2_rpc::data::legacy::{BalanceResponse, ElectrumProtocol};
 use rand::Rng;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{self as json, json, Value as Json};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::env;
+use std::fmt::Debug;
 use std::net::IpAddr;
 use std::num::NonZeroUsize;
 use std::process::Child;
@@ -186,6 +187,8 @@ pub const DOC_ELECTRUM_ADDRS: &[&str] = &[
     "electrum2.cipig.net:10020",
     "electrum3.cipig.net:10020",
 ];
+
+/// NOTE: These are websocket servers.
 #[cfg(target_arch = "wasm32")]
 pub const DOC_ELECTRUM_ADDRS: &[&str] = &[
     "electrum1.cipig.net:30020",
@@ -260,6 +263,53 @@ pub const ETH_SEPOLIA_TOKEN_CONTRACT: &str = "0x09d0d71FBC00D7CCF9CFf132f5E6825C
 
 pub const BCHD_TESTNET_URLS: &[&str] = &["https://bchd-testnet.greyh.at:18335"];
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum TypedRpcResponse<T> {
+    Result { result: T },
+    Error { error: String },
+}
+
+/// Custom wrapper type for deserializing API responses into `Result<T, String>`
+/// used by MarketMakerIt::rpc_typed
+#[derive(Debug, Serialize)]
+#[serde(transparent)] // Keep serialization the same as `Result<T, String>`
+pub struct RpcResult<T>(pub Result<T, String>);
+
+/// Custom deserialization logic for `RpcResult<T>`
+impl<'de, T> Deserialize<'de> for RpcResult<T>
+where
+    T: Deserialize<'de> + Debug,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // Define an untagged enum that matches the API response
+        #[derive(Deserialize, Debug)]
+        #[serde(untagged)]
+        enum InternalRpcResponse<T> {
+            // eg {"result": "foobar"} or {"result": {"foo": "bar"}}
+            Result { result: T },
+            // eg {"result": "success", "foo": "bar"}
+            ResultFlattened(T),
+            Error { error: String },
+        }
+
+        // Deserialize into the internal representation first
+        let response = InternalRpcResponse::<T>::deserialize(deserializer)?;
+
+        // Convert into Result<T, String>
+        let result = match response {
+            InternalRpcResponse::Result { result } => Ok(result),
+            InternalRpcResponse::ResultFlattened(result) => Ok(result),
+            InternalRpcResponse::Error { error } => Err(error),
+        };
+
+        Ok(RpcResult(result))
+    }
+}
+
 pub struct Mm2TestConf {
     pub conf: Json,
     pub rpc_password: String,
@@ -275,6 +325,7 @@ impl Mm2TestConf {
                 "coins": coins,
                 "rpc_password": DEFAULT_RPC_PASSWORD,
                 "i_am_seed": true,
+                "is_bootstrap_node": true
             }),
             rpc_password: DEFAULT_RPC_PASSWORD.into(),
         }
@@ -291,6 +342,7 @@ impl Mm2TestConf {
                 "rpc_password": DEFAULT_RPC_PASSWORD,
                 "i_am_seed": true,
                 "use_trading_proto_v2": true,
+                "is_bootstrap_node": true
             }),
             rpc_password: DEFAULT_RPC_PASSWORD.into(),
         }
@@ -306,6 +358,7 @@ impl Mm2TestConf {
                 "rpc_password": DEFAULT_RPC_PASSWORD,
                 "i_am_seed": true,
                 "enable_hd": true,
+                "is_bootstrap_node": true
             }),
             rpc_password: DEFAULT_RPC_PASSWORD.into(),
         }
@@ -322,6 +375,7 @@ impl Mm2TestConf {
                 "i_am_seed": true,
                 "enable_hd": true,
                 "use_trading_proto_v2": true,
+                "is_bootstrap_node": true
             }),
             rpc_password: DEFAULT_RPC_PASSWORD.into(),
         }
@@ -337,6 +391,7 @@ impl Mm2TestConf {
                 "i_am_seed": true,
                 "wallet_name": wallet_name,
                 "wallet_password": wallet_password,
+                "is_bootstrap_node": true
             }),
             rpc_password: DEFAULT_RPC_PASSWORD.into(),
         }
@@ -420,6 +475,11 @@ impl Mm2TestConf {
     }
 
     pub fn no_login_node(coins: &Json, seednodes: &[&str]) -> Self {
+        assert!(
+            !seednodes.is_empty(),
+            "Invalid Test Setup: A no-login node requires at least one seednode."
+        );
+
         Mm2TestConf {
             conf: json!({
                 "gui": "nogui",
@@ -473,11 +533,15 @@ pub enum Mm2InitPrivKeyPolicy {
     GlobalHDAccount,
 }
 
-pub fn zombie_conf() -> Json { zombie_conf_inner(None) }
+pub fn zombie_conf() -> Json {
+    zombie_conf_inner(None, 0)
+}
 
-pub fn zombie_conf_for_docker() -> Json { zombie_conf_inner(Some(10)) }
+pub fn zombie_conf_for_docker() -> Json {
+    zombie_conf_inner(Some(10), 1)
+}
 
-pub fn zombie_conf_inner(custom_blocktime: Option<u8>) -> Json {
+pub fn zombie_conf_inner(custom_blocktime: Option<u8>, required_confirmations: u8) -> Json {
     json!({
         "coin":"ZOMBIE",
         "asset":"ZOMBIE",
@@ -504,7 +568,7 @@ pub fn zombie_conf_inner(custom_blocktime: Option<u8>) -> Json {
                 "z_derivation_path": "m/32'/133'",
             }
         },
-        "required_confirmations":0,
+        "required_confirmations": required_confirmations,
         "derivation_path": "m/44'/133'",
     })
 }
@@ -549,6 +613,7 @@ pub fn rick_conf() -> Json {
         "txversion":4,
         "overwintered":1,
         "derivation_path": "m/44'/141'",
+        "sign_message_prefix": "Komodo Signed Message:\n",
         "protocol":{
             "type":"UTXO"
         }
@@ -822,30 +887,38 @@ pub fn eth_testnet_conf_trezor() -> Json {
         "coin": "ETH",
         "name": "ethereum",
         "mm2": 1,
-        "chain_id": 1337,
         "max_eth_tx_type": 2,
         "derivation_path": "m/44'/1'", // Trezor uses coin type 1 for testnet
         "protocol": {
-            "type": "ETH"
+            "type": "ETH",
+            "protocol_data": {
+                "chain_id": 1337,
+            }
         },
         "trezor_coin": "Ethereum"
     })
 }
 
 /// ETH configuration used for dockerized Geth dev node
-pub fn eth_dev_conf() -> Json { eth_conf("ETH") }
+pub fn eth_dev_conf() -> Json {
+    eth_conf("ETH")
+}
 
-pub fn eth1_dev_conf() -> Json { eth_conf("ETH1") }
+pub fn eth1_dev_conf() -> Json {
+    eth_conf("ETH1")
+}
 
 fn eth_conf(coin: &str) -> Json {
     json!({
         "coin": coin,
         "name": "ethereum",
         "mm2": 1,
-        "chain_id": 1337,
         "derivation_path": "m/44'/60'",
         "protocol": {
-            "type": "ETH"
+            "type": "ETH",
+            "protocol_data": {
+                "chain_id": 1337,
+            }
         },
         "max_eth_tx_type": 2
     })
@@ -856,7 +929,6 @@ pub fn erc20_dev_conf(contract_address: &str) -> Json {
     json!({
         "coin": "ERC20DEV",
         "name": "erc20dev",
-        "chain_id": 1337,
         "mm2": 1,
         "derivation_path": "m/44'/60'",
         "protocol": {
@@ -882,7 +954,6 @@ pub fn nft_dev_conf() -> Json {
     json!({
         "coin": "NFT_ETH",
         "name": "nftdev",
-        "chain_id": 1337,
         "mm2": 1,
         "derivation_path": "m/44'/60'",
         "protocol": {
@@ -895,16 +966,20 @@ pub fn nft_dev_conf() -> Json {
     })
 }
 
-fn set_chain_id(conf: &mut Json, chain_id: u64) { conf["chain_id"] = json!(chain_id); }
+fn set_chain_id(conf: &mut Json, chain_id: u64) {
+    conf["chain_id"] = json!(chain_id);
+}
 
 pub fn eth_sepolia_conf() -> Json {
     json!({
         "coin": "ETH",
         "name": "ethereum",
         "derivation_path": "m/44'/60'",
-        "chain_id": ETH_SEPOLIA_CHAIN_ID,
         "protocol": {
-            "type": "ETH"
+            "type": "ETH",
+            "protocol_data": {
+                "chain_id": ETH_SEPOLIA_CHAIN_ID,
+            }
         },
         "max_eth_tx_type": 2,
         "trezor_coin": "Ethereum"
@@ -916,9 +991,11 @@ pub fn eth_sepolia_trezor_firmware_compat_conf() -> Json {
         "coin": "tETH",
         "name": "ethereum",
         "derivation_path": "m/44'/1'", // Note: trezor uses coin type 1' for eth for testnet (SLIP44_TESTNET)
-        "chain_id": ETH_SEPOLIA_CHAIN_ID,
         "protocol": {
-            "type": "ETH"
+            "type": "ETH",
+            "protocol_data": {
+                "chain_id": ETH_SEPOLIA_CHAIN_ID,
+            }
         },
         "max_eth_tx_type": 2,
         "trezor_coin": "tETH"
@@ -929,7 +1006,6 @@ pub fn eth_jst_testnet_conf() -> Json {
     json!({
         "coin": "JST",
         "name": "jst",
-        "chain_id": 1337,
         "derivation_path": "m/44'/60'",
         "protocol": {
             "type": "ERC20",
@@ -946,12 +1022,10 @@ pub fn jst_sepolia_conf() -> Json {
     json!({
         "coin": "JST",
         "name": "jst",
-        "chain_id": ETH_SEPOLIA_CHAIN_ID,
         "protocol": {
             "type": "ERC20",
             "protocol_data": {
                 "platform": "ETH",
-                "chain_id": ETH_SEPOLIA_CHAIN_ID,
                 "contract_address": ETH_SEPOLIA_TOKEN_CONTRACT
             }
         },
@@ -963,14 +1037,12 @@ pub fn jst_sepolia_trezor_conf() -> Json {
     json!({
         "coin": "tJST",
         "name": "tjst",
-        "chain_id": ETH_SEPOLIA_CHAIN_ID,
         "derivation_path": "m/44'/1'", // Note: Trezor uses 1' coin type for all testnets
         "trezor_coin": "tETH",
         "protocol": {
             "type": "ERC20",
             "protocol_data": {
                 "platform": "ETH",
-                "chain_id": ETH_SEPOLIA_CHAIN_ID,
                 "contract_address": ETH_SEPOLIA_TOKEN_CONTRACT
             }
         }
@@ -1095,11 +1167,13 @@ pub fn tbnb_conf() -> Json {
         "coin": "tBNB",
         "name": "binancesmartchaintest",
         "avg_blocktime": 0.25,
-        "chain_id": 97,
         "mm2": 1,
         "required_confirmations": 0,
         "protocol": {
-            "type": "ETH"
+            "type": "ETH",
+            "protocol_data": {
+                "chain_id": 97
+            }
         }
     })
 }
@@ -1134,10 +1208,14 @@ pub fn mm_ctx_with_iguana(passphrase: Option<&str>) -> MmArc {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn mm_ctx_with_custom_db() -> MmArc { MmCtxBuilder::new().with_test_db_namespace().into_mm_arc() }
+pub fn mm_ctx_with_custom_db() -> MmArc {
+    MmCtxBuilder::new().with_test_db_namespace().into_mm_arc()
+}
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn mm_ctx_with_custom_db() -> MmArc { mm_ctx_with_custom_db_with_conf(None) }
+pub fn mm_ctx_with_custom_db() -> MmArc {
+    mm_ctx_with_custom_db_with_conf(None)
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn mm_ctx_with_custom_db_with_conf(conf: Option<Json>) -> MmArc {
@@ -1182,13 +1260,20 @@ pub async fn mm_ctx_with_custom_async_db() -> MmArc {
     ctx
 }
 
+#[cfg(target_arch = "wasm32")]
+pub async fn mm_ctx_with_custom_async_db() -> MmArc {
+    MmCtxBuilder::new().with_test_db_namespace().into_mm_arc()
+}
+
 /// Automatically kill a wrapped process.
 pub struct RaiiKill {
     pub handle: Child,
     running: bool,
 }
 impl RaiiKill {
-    pub fn from_handle(handle: Child) -> RaiiKill { RaiiKill { handle, running: true } }
+    pub fn from_handle(handle: Child) -> RaiiKill {
+        RaiiKill { handle, running: true }
+    }
     pub fn running(&mut self) -> bool {
         if !self.running {
             return false;
@@ -1275,6 +1360,8 @@ pub struct MarketMakerIt {
     pub folder: PathBuf,
     /// Unique (to run multiple instances) IP, like "127.0.0.$x".
     pub ip: IpAddr,
+    /// Port to bind RPC interface to on the given IP, defaults to 7783 if None.
+    pub rpc_port: Option<u16>,
     /// The file we redirected the standard output and error streams to.
     pub log_path: PathBuf,
     /// The PID of the MarketMaker process.
@@ -1334,7 +1421,11 @@ impl MarketMakerIt {
     ) -> Result<MarketMakerIt, String> {
         conf["allow_weak_password"] = true.into();
         let ip = try_s!(Self::myipaddr_from_conf(&mut conf));
-        let folder = new_mm2_temp_folder_path(Some(ip));
+        let rpc_port = match conf["rpcport"].as_u64() {
+            Some(port) => Some(port as u16),
+            None => None,
+        };
+        let folder = new_mm2_temp_folder_path(Some(ip), rpc_port);
         let db_dir = match conf["dbdir"].as_str() {
             Some(path) => path.into(),
             None => {
@@ -1388,6 +1479,7 @@ impl MarketMakerIt {
         let mut mm = MarketMakerIt {
             folder,
             ip,
+            rpc_port,
             log_path,
             pc,
             userpass,
@@ -1534,8 +1626,7 @@ impl MarketMakerIt {
         .with_timeout_secs(timeout_sec)
         .await
         .map_err(|e| ERRL!("{:?}", e))
-        // Convert `Result<Result<(), String>, String>` to `Result<(), String>`
-        .flatten()
+        .and_then(|inner_result| inner_result)
     }
 
     /// Busy-wait on the instance in-memory log until the `pred` returns `true` or `timeout_sec` expires.
@@ -1571,11 +1662,43 @@ impl MarketMakerIt {
         }
     }
 
+    /// Modifies the provided payload to include the stored `userpass` and calls the `rpc` method.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn rpc_with_stored_auth(&self, payload: &Json) -> Result<(StatusCode, String, HeaderMap), String> {
+        // Clone the payload to avoid requiring a mutable reference
+        let mut modified_payload = payload.clone();
+
+        // Ensure the payload is an object to insert the `userpass`
+        if let Some(payload_obj) = modified_payload.as_object_mut() {
+            // Insert the `userpass` into the payload
+            payload_obj.insert("userpass".to_string(), json!(self.userpass));
+        } else {
+            return Err(format!("Expected payload to be a JSON object, but got: {}", payload));
+        }
+
+        // Call the existing `rpc` method with the modified payload
+        self.rpc(&modified_payload).await
+    }
+
+    /// Calls the rpc_with_stored_auth method and deserializes the result into a typed value.
+    /// eg, mm.rpc_typed::<MyType>(&json!({ "method": "my_method" })).await
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn rpc_typed<T: for<'a> serde::Deserialize<'a> + Debug>(&self, payload: &Json) -> Result<T, String> {
+        let (status, body, _headers) = self.rpc_with_stored_auth(payload).await?;
+        if status != StatusCode::OK {
+            return ERR!("RPC failed with status {}: {}", status, body);
+        }
+        let result: RpcResult<T> =
+            serde_json::from_str(&body).map_err(|e| format!("Failed to parse JSON: {} body:{}", e, body))?;
+        result.0
+    }
+
     /// Invokes the locally running MM and returns its reply.
     #[cfg(not(target_arch = "wasm32"))]
     pub async fn rpc(&self, payload: &Json) -> Result<(StatusCode, String, HeaderMap), String> {
-        let uri = format!("http://{}:7783", self.ip);
-        log!("sending rpc request {} to {}", json::to_string(payload).unwrap(), uri);
+        let port = self.rpc_port.unwrap_or(7783);
+        let uri = format!("http://{}:{}", self.ip, port);
+        common::log::debug!("sending rpc request {} to {}", json::to_string(payload).unwrap(), uri);
 
         let payload = try_s!(json::to_vec(payload));
         let request = try_s!(Request::builder().method("POST").uri(uri).body(payload));
@@ -1599,13 +1722,19 @@ impl MarketMakerIt {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn mm_dump(&self) -> (RaiiDump, RaiiDump) { mm_dump(&self.log_path) }
+    pub fn mm_dump(&self) -> (RaiiDump, RaiiDump) {
+        mm_dump(&self.log_path)
+    }
 
     #[cfg(target_arch = "wasm32")]
-    pub fn mm_dump(&self) -> (RaiiDump, RaiiDump) { (RaiiDump {}, RaiiDump {}) }
+    pub fn mm_dump(&self) -> (RaiiDump, RaiiDump) {
+        (RaiiDump {}, RaiiDump {})
+    }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn my_seed_addr(&self) -> String { format!("{}", self.ip) }
+    pub fn my_seed_addr(&self) -> String {
+        format!("{}", self.ip)
+    }
 
     /// # Panic
     ///
@@ -1802,6 +1931,7 @@ where
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Serialize, Deserialize, Debug)]
 struct ToWaitForLogRe {
     ctx: u32,
@@ -1860,6 +1990,7 @@ pub fn mm_spat() -> (&'static str, MarketMakerIt, RaiiDump, RaiiDump) {
             ],
             "i_am_seed": true,
             "rpc_password": "pass",
+            "is_bootstrap_node": true,
         }),
         "pass".into(),
         None,
@@ -2072,14 +2203,16 @@ pub struct TestNode {
     pub url: String,
 }
 
-pub async fn enable_eth_coin_v2(
+pub async fn enable_eth_coin_with_tokens_v2(
     mm: &MarketMakerIt,
     ticker: &str,
+    tokens: &[&str],
     swap_contract_address: &str,
     swap_v2_contracts: SwapV2TestContracts,
     fallback_swap_contract: Option<&str>,
     nodes: &[TestNode],
 ) -> Json {
+    let erc20_tokens_requests: Vec<_> = tokens.iter().map(|ticker| json!({ "ticker": ticker })).collect();
     let enable = mm
         .rpc(&json!({
             "userpass": mm.userpass,
@@ -2096,7 +2229,7 @@ pub async fn enable_eth_coin_v2(
                 },
                 "fallback_swap_contract": fallback_swap_contract,
                 "nodes": nodes.iter().map(|node| json!({ "url": node.url })).collect::<Vec<_>>(),
-                "erc20_tokens_requests": []
+                "erc20_tokens_requests": erc20_tokens_requests
             }
         }))
         .await
@@ -2319,15 +2452,16 @@ pub async fn init_lightning_status(mm: &MarketMakerIt, task_id: u64) -> Json {
 /// Use a separate (unique) temporary folder for each MM.
 /// We could also remove the old folders after some time in order not to spam the temporary folder.
 /// Though we don't always want to remove them right away, allowing developers to check the files).
-/// Appends IpAddr if it is pre-known
+/// Appends IpAddr if it is pre-known. Appends port number if IpAddr and port are provided.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn new_mm2_temp_folder_path(ip: Option<IpAddr>) -> PathBuf {
+pub fn new_mm2_temp_folder_path(ip: Option<IpAddr>, port: Option<u16>) -> PathBuf {
     let now = common::now_ms();
     #[allow(deprecated)]
     let now = Local.timestamp((now / 1000) as i64, (now % 1000) as u32 * 1_000_000);
-    let folder = match ip {
-        Some(ip) => format!("mm2_{}_{}", now.format("%Y-%m-%d_%H-%M-%S-%3f"), ip),
-        None => format!("mm2_{}", now.format("%Y-%m-%d_%H-%M-%S-%3f")),
+    let folder = match (ip, port) {
+        (Some(ip), Some(port)) => format!("mm2_{}_{}_{}", now.format("%Y-%m-%d_%H-%M-%S-%3f"), ip, port),
+        (Some(ip), None) => format!("mm2_{}_{}", now.format("%Y-%m-%d_%H-%M-%S-%3f"), ip),
+        (None, _) => format!("mm2_{}", now.format("%Y-%m-%d_%H-%M-%S-%3f")),
     };
     common::temp_dir().join(folder)
 }
@@ -2412,6 +2546,65 @@ pub async fn wait_for_swap_finished(mm: &MarketMakerIt, uuid: &str, wait_sec: i6
     }
 }
 
+pub async fn wait_for_swap_finished_or_err(mm: &MarketMakerIt, uuid: &str, wait_sec: i64) -> Result<(), String> {
+    let wait_until = get_utc_timestamp() + wait_sec;
+    loop {
+        let swap_status = my_swap_status(mm, uuid).await.unwrap();
+        if swap_status["result"]["is_finished"].as_bool().unwrap() {
+            match swap_status["result"]["is_success"].as_bool() {
+                Some(true) => return Ok(()),
+                _ => {
+                    return Err(format!(
+                        "Swap {} failed with status: {}",
+                        uuid,
+                        serde_json::to_string(&swap_status).unwrap()
+                    ));
+                },
+            }
+        }
+
+        if get_utc_timestamp() > wait_until {
+            return Err(format!(
+                "Timed out waiting for swap {} to finish; latest status: {}",
+                uuid,
+                serde_json::to_string(&swap_status).unwrap()
+            ));
+        }
+
+        Timer::sleep(0.5).await;
+    }
+}
+
+/// Wait until the `event_str` appears in the swap's events or throw an error after `seconds` seconds.
+pub async fn wait_until_event(mm: &MarketMakerIt, swap: &str, event_str: &str, seconds: i64) {
+    let started_at = get_utc_timestamp();
+    let until = started_at + seconds;
+    loop {
+        let swap_status = my_swap_status(mm, swap).await.unwrap();
+
+        if get_utc_timestamp() > until {
+            panic!(
+                "Timed out waiting for event {} with status: {}",
+                event_str,
+                serde_json::to_string(&swap_status).unwrap()
+            );
+        }
+
+        let events = swap_status["result"]["events"].as_array().unwrap();
+
+        let event_strs = events
+            .iter()
+            .map(|event| event["event"]["type"].as_str().unwrap())
+            .collect::<Vec<&str>>();
+
+        if event_strs.contains(&event_str) {
+            break;
+        }
+        Timer::sleep(1.).await;
+    }
+}
+
+// TakerFeeSent
 pub async fn wait_for_swap_contract_negotiation(mm: &MarketMakerIt, swap: &str, expected_contract: Json, until: i64) {
     let events = loop {
         if get_utc_timestamp() > until {
@@ -2518,7 +2711,13 @@ pub async fn wait_check_stats_swap_status(mm: &MarketMakerIt, uuid: &str, timeou
             }))
             .await
             .unwrap();
-        assert!(response.0.is_success(), "!status of {}: {}", uuid, response.1);
+        if !response.0.is_success() {
+            Timer::sleep(1.).await;
+            if get_utc_timestamp() > wait_until {
+                panic!("Timed out waiting for swap stats status uuid={}, latest status={}", uuid, response.1);
+            }
+            continue;
+        }
         let status_response: Json = json::from_str(&response.1).unwrap();
 
         // Perform the checks only if the maker and taker stats are available.
@@ -2730,7 +2929,7 @@ pub async fn withdraw_v1(
 
 pub async fn ibc_withdraw(
     mm: &MarketMakerIt,
-    source_channel: &str,
+    source_channel: u16,
     coin: &str,
     to: &str,
     amount: &str,
@@ -2870,7 +3069,7 @@ pub async fn init_z_coin_status(mm: &MarketMakerIt, task_id: u64) -> Json {
     json::from_str(&request.1).unwrap()
 }
 
-pub async fn sign_message(mm: &MarketMakerIt, coin: &str) -> Json {
+pub async fn sign_message(mm: &MarketMakerIt, coin: &str, derivation_path: Option<HDAddressSelector>) -> Json {
     let request = mm
         .rpc(&json!({
             "userpass": mm.userpass,
@@ -2879,7 +3078,8 @@ pub async fn sign_message(mm: &MarketMakerIt, coin: &str) -> Json {
             "id": 0,
             "params":{
               "coin": coin,
-              "message":"test"
+              "message": "test",
+              "address": derivation_path
             }
         }))
         .await
@@ -2967,6 +3167,20 @@ pub async fn get_wallet_names(mm: &MarketMakerIt) -> GetWalletNamesResult {
     assert_eq!(request.0, StatusCode::OK, "'get_wallet_names' failed: {}", request.1);
     let res: RpcSuccessResponse<_> = json::from_str(&request.1).unwrap();
     res.result
+}
+
+pub async fn delete_wallet(mm: &MarketMakerIt, wallet_name: &str, password: &str) -> (StatusCode, String, HeaderMap) {
+    mm.rpc(&json!({
+        "userpass": mm.userpass,
+        "method": "delete_wallet",
+        "mmrpc": "2.0",
+        "params": {
+            "wallet_name": wallet_name,
+            "password": password,
+        }
+    }))
+    .await
+    .unwrap()
 }
 
 pub async fn max_maker_vol(mm: &MarketMakerIt, coin: &str) -> RpcResponse {
@@ -3318,12 +3532,14 @@ pub async fn init_utxo_electrum(
             "rpc": "Electrum",
             "rpc_data": {
                 "servers": servers,
-                "path_to_address": path_to_address,
             }
         }
     });
     if let Some(priv_key_policy) = priv_key_policy {
         activation_params["priv_key_policy"] = priv_key_policy.into();
+    }
+    if let Some(path_to_address) = path_to_address {
+        activation_params["path_to_address"] = json!(path_to_address);
     }
     let request = mm
         .rpc(&json!({
@@ -3395,7 +3611,7 @@ pub async fn enable_utxo_v2_electrum(
     }
 }
 
-pub async fn init_eth_with_tokens(
+async fn task_enable_eth_with_tokens_init(
     mm: &MarketMakerIt,
     platform_coin: &str,
     tokens: &[&str],
@@ -3431,7 +3647,7 @@ pub async fn init_eth_with_tokens(
     json::from_str(&response.1).unwrap()
 }
 
-pub async fn init_eth_with_tokens_status(mm: &MarketMakerIt, task_id: u64) -> Json {
+async fn task_eth_with_tokens_status(mm: &MarketMakerIt, task_id: u64) -> Json {
     let request = mm
         .rpc(&json!({
             "userpass": mm.userpass,
@@ -3452,7 +3668,7 @@ pub async fn init_eth_with_tokens_status(mm: &MarketMakerIt, task_id: u64) -> Js
     json::from_str(&request.1).unwrap()
 }
 
-pub async fn enable_eth_with_tokens_v2(
+pub async fn task_enable_eth_with_tokens(
     mm: &MarketMakerIt,
     platform_coin: &str,
     tokens: &[&str],
@@ -3461,7 +3677,7 @@ pub async fn enable_eth_with_tokens_v2(
     timeout: u64,
     path_to_address: Option<HDAccountAddressId>,
 ) -> EthWithTokensActivationResult {
-    let init = init_eth_with_tokens(mm, platform_coin, tokens, swap_contract_address, nodes, path_to_address).await;
+    let init = task_enable_eth_with_tokens_init(mm, platform_coin, tokens, swap_contract_address, nodes, path_to_address).await;
     let init: RpcV2Response<InitTaskResult> = json::from_value(init).unwrap();
     let timeout = wait_until_ms(timeout * 1000);
 
@@ -3470,7 +3686,7 @@ pub async fn enable_eth_with_tokens_v2(
             panic!("{} initialization timed out", platform_coin);
         }
 
-        let status = init_eth_with_tokens_status(mm, init.result.task_id).await;
+        let status = task_eth_with_tokens_status(mm, init.result.task_id).await;
         let status: RpcV2Response<InitEthWithTokensStatus> = json::from_value(status).unwrap();
         match status.result {
             InitEthWithTokensStatus::Ok(result) => break result,
@@ -3581,6 +3797,7 @@ pub async fn set_price(
     price: &str,
     vol: &str,
     max: bool,
+    timeout_in_minutes: Option<u16>,
 ) -> SetPriceResponse {
     let request = mm
         .rpc(&json!({
@@ -3591,6 +3808,7 @@ pub async fn set_price(
             "price": price,
             "volume": vol,
             "max": max,
+            "timeout_in_minutes": timeout_in_minutes,
         }))
         .await
         .unwrap();
@@ -3601,7 +3819,7 @@ pub async fn set_price(
 pub async fn start_swaps(
     maker: &mut MarketMakerIt,
     taker: &mut MarketMakerIt,
-    pairs: &[(&'static str, &'static str)],
+    pairs: &[(&str, &str)],
     maker_price: f64,
     taker_price: f64,
     volume: f64,
@@ -3719,6 +3937,8 @@ pub async fn test_qrc20_history_impl(local_start: Option<LocalStart>) {
             "coins": coins,
             "rpc_password": "pass",
             "metrics_interval": 30.,
+            "disable_p2p": true,
+            "p2p_in_memory": false
         }),
         "pass".into(),
         local_start,

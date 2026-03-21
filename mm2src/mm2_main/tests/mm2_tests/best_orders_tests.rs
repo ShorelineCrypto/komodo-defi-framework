@@ -3,9 +3,10 @@ use common::{block_on, log};
 use http::StatusCode;
 use mm2_number::BigDecimal;
 use mm2_rpc::data::legacy::CoinInitResponse;
-use mm2_test_helpers::for_tests::{best_orders_v2, best_orders_v2_by_number, get_passphrase, morty_conf, rick_conf,
-                                  tbtc_conf, tbtc_segwit_conf, MarketMakerIt, Mm2TestConf, DOC_ELECTRUM_ADDRS,
-                                  MARTY_ELECTRUM_ADDRS, TBTC_ELECTRUMS};
+use mm2_test_helpers::for_tests::{
+    best_orders_v2, best_orders_v2_by_number, get_passphrase, morty_conf, rick_conf, tbtc_conf, tbtc_segwit_conf,
+    MarketMakerIt, Mm2TestConf, DOC_ELECTRUM_ADDRS, MARTY_ELECTRUM_ADDRS, TBTC_ELECTRUMS,
+};
 use mm2_test_helpers::structs::{BestOrdersResponse, SetPriceResponse};
 use serde_json::{self as json, json};
 use std::collections::BTreeSet;
@@ -30,6 +31,7 @@ fn test_best_orders_v2_exclude_mine() {
             "coins": coins,
             "rpc_password": "pass",
             "i_am_seed": true,
+            "is_bootstrap_node": true
         }),
         "pass".into(),
         None,
@@ -137,6 +139,7 @@ fn test_best_orders_no_duplicates_after_update() {
             "coins": coins,
             "rpc_password": "pass",
             "i_am_seed": true,
+            "is_bootstrap_node": true
         }),
         "pass".into(),
         None,
@@ -291,6 +294,7 @@ fn test_best_orders_address_and_confirmations() {
             "coins": bob_coins_config,
             "rpc_password": "pass",
             "i_am_seed": true,
+            "is_bootstrap_node": true
         }),
         "pass".into(),
         None,
@@ -603,6 +607,7 @@ fn zhtlc_best_orders() {
             "coins": coins,
             "rpc_password": "pass",
             "i_am_seed": true,
+            "is_bootstrap_node": true
         }),
         "pass".into(),
         None,

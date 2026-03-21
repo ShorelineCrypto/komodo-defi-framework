@@ -1,7 +1,6 @@
 use std::str::FromStr;
 use std::{convert::TryInto, fmt};
 
-use base58::{FromBase58, ToBase58};
 use crypto::{checksum, ChecksumType};
 use std::ops::Deref;
 use {AddressHashEnum, AddressPrefix, DisplayLayout};
@@ -25,7 +24,9 @@ pub struct LegacyAddressDisplayLayout(Vec<u8>);
 impl Deref for LegacyAddressDisplayLayout {
     type Target = [u8];
 
-    fn deref(&self) -> &Self::Target { &self.0 }
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl DisplayLayout for LegacyAddress {
@@ -82,17 +83,21 @@ impl FromStr for LegacyAddress {
     where
         Self: Sized,
     {
-        let hex = s.from_base58().map_err(|_| Error::InvalidAddress)?;
+        let hex = bs58::decode(s).into_vec().map_err(|_| Error::InvalidAddress)?;
         LegacyAddress::from_layout(&hex)
     }
 }
 
 impl From<&'static str> for LegacyAddress {
-    fn from(s: &'static str) -> Self { s.parse().unwrap_or_default() }
+    fn from(s: &'static str) -> Self {
+        s.parse().unwrap_or_default()
+    }
 }
 
 impl fmt::Display for LegacyAddress {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result { self.layout().to_base58().fmt(fmt) }
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        bs58::encode(self.layout().as_ref()).into_string().fmt(fmt)
+    }
 }
 
 impl LegacyAddress {

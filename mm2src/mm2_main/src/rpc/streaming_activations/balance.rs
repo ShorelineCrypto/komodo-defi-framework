@@ -7,9 +7,11 @@ use coins::utxo::utxo_balance_events::UtxoBalanceEventStreamer;
 use coins::z_coin::z_balance_streaming::ZCoinBalanceEventStreamer;
 use coins::{lp_coinfind, MmCoin, MmCoinEnum};
 use common::HttpStatusCode;
+use derive_more::Display;
 use http::StatusCode;
 use mm2_core::mm_ctx::MmArc;
 use mm2_err_handle::{map_to_mm::MapToMmResult, mm_error::MmResult};
+use mm2_event_stream::DeriveStreamerId;
 
 use serde_json::Value as Json;
 
@@ -50,12 +52,12 @@ pub async fn enable_balance(
         .ok_or(BalanceStreamingRequestError::CoinNotFound)?;
 
     match coin {
-        MmCoinEnum::EthCoin(_) => (),
-        MmCoinEnum::ZCoin(_)
-        | MmCoinEnum::UtxoCoin(_)
-        | MmCoinEnum::Bch(_)
-        | MmCoinEnum::QtumCoin(_)
-        | MmCoinEnum::Tendermint(_) => {
+        MmCoinEnum::EthCoinVariant(_) => (),
+        MmCoinEnum::ZCoinVariant(_)
+        | MmCoinEnum::UtxoCoinVariant(_)
+        | MmCoinEnum::BchVariant(_)
+        | MmCoinEnum::QtumCoinVariant(_)
+        | MmCoinEnum::TendermintVariant(_) => {
             if req.config.is_some() {
                 Err(BalanceStreamingRequestError::EnableError(
                     "Invalid config provided. No config needed".to_string(),
@@ -66,28 +68,28 @@ pub async fn enable_balance(
     }
 
     let enable_result = match coin {
-        MmCoinEnum::UtxoCoin(coin) => {
+        MmCoinEnum::UtxoCoinVariant(coin) => {
             let streamer = UtxoBalanceEventStreamer::new(coin.clone().into());
             ctx.event_stream_manager.add(client_id, streamer, coin.spawner()).await
         },
-        MmCoinEnum::Bch(coin) => {
+        MmCoinEnum::BchVariant(coin) => {
             let streamer = UtxoBalanceEventStreamer::new(coin.clone().into());
             ctx.event_stream_manager.add(client_id, streamer, coin.spawner()).await
         },
-        MmCoinEnum::QtumCoin(coin) => {
+        MmCoinEnum::QtumCoinVariant(coin) => {
             let streamer = UtxoBalanceEventStreamer::new(coin.clone().into());
             ctx.event_stream_manager.add(client_id, streamer, coin.spawner()).await
         },
-        MmCoinEnum::EthCoin(coin) => {
+        MmCoinEnum::EthCoinVariant(coin) => {
             let streamer = EthBalanceEventStreamer::try_new(req.config, coin.clone())
                 .map_to_mm(|e| BalanceStreamingRequestError::EnableError(format!("{e:?}")))?;
             ctx.event_stream_manager.add(client_id, streamer, coin.spawner()).await
         },
-        MmCoinEnum::ZCoin(coin) => {
+        MmCoinEnum::ZCoinVariant(coin) => {
             let streamer = ZCoinBalanceEventStreamer::new(coin.clone());
             ctx.event_stream_manager.add(client_id, streamer, coin.spawner()).await
         },
-        MmCoinEnum::Tendermint(coin) => {
+        MmCoinEnum::TendermintVariant(coin) => {
             let streamer = TendermintBalanceEventStreamer::new(coin.clone());
             ctx.event_stream_manager.add(client_id, streamer, coin.spawner()).await
         },

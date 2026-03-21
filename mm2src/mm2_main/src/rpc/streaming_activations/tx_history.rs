@@ -5,9 +5,11 @@ use coins::utxo::tx_history_events::TxHistoryEventStreamer;
 use coins::z_coin::tx_history_events::ZCoinTxHistoryEventStreamer;
 use coins::{lp_coinfind, MmCoin, MmCoinEnum};
 use common::HttpStatusCode;
+use derive_more::Display;
 use http::StatusCode;
 use mm2_core::mm_ctx::MmArc;
 use mm2_err_handle::{map_to_mm::MapToMmResult, mm_error::MmResult};
+use mm2_event_stream::DeriveStreamerId;
 
 #[derive(Deserialize)]
 pub struct EnableTxHistoryStreamingRequest {
@@ -45,25 +47,25 @@ pub async fn enable_tx_history(
         .ok_or(TxHistoryStreamingRequestError::CoinNotFound)?;
 
     let enable_result = match coin {
-        MmCoinEnum::UtxoCoin(coin) => {
+        MmCoinEnum::UtxoCoinVariant(coin) => {
             let streamer = TxHistoryEventStreamer::new(req.coin);
             ctx.event_stream_manager.add(client_id, streamer, coin.spawner()).await
         },
-        MmCoinEnum::Bch(coin) => {
+        MmCoinEnum::BchVariant(coin) => {
             let streamer = TxHistoryEventStreamer::new(req.coin);
             ctx.event_stream_manager.add(client_id, streamer, coin.spawner()).await
         },
-        MmCoinEnum::QtumCoin(coin) => {
+        MmCoinEnum::QtumCoinVariant(coin) => {
             let streamer = TxHistoryEventStreamer::new(req.coin);
             ctx.event_stream_manager.add(client_id, streamer, coin.spawner()).await
         },
-        MmCoinEnum::Tendermint(coin) => {
+        MmCoinEnum::TendermintVariant(coin) => {
             // The tx history streamer is very primitive reactive streamer that only emits new txs.
             // it's logic is exactly the same for utxo coins and tendermint coins as well.
             let streamer = TxHistoryEventStreamer::new(req.coin);
             ctx.event_stream_manager.add(client_id, streamer, coin.spawner()).await
         },
-        MmCoinEnum::ZCoin(coin) => {
+        MmCoinEnum::ZCoinVariant(coin) => {
             let streamer = ZCoinTxHistoryEventStreamer::new(coin.clone());
             ctx.event_stream_manager.add(client_id, streamer, coin.spawner()).await
         },

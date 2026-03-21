@@ -11,7 +11,7 @@ use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::Path;
 
-use mm2_err_handle::prelude::MmError;
+use mm2_err_handle::prelude::{MapToMmResult, MmError};
 use std::net::ToSocketAddrs;
 
 const IP_PROVIDERS: [&str; 2] = ["http://checkip.amazonaws.com/", "http://api.ipify.org"];
@@ -115,10 +115,7 @@ async fn detect_myipaddr(ctx: MmArc) -> Result<IpAddr, String> {
     // If the bind fails then emit a user-visible warning and fall back to 0.0.0.0.
     match test_ip(&ctx, ip) {
         Ok(_) => {
-            let msg = format!(
-                "We've detected an external IP {} and we can bind on it, so probably a dedicated IP.",
-                ip
-            );
+            let msg = format!("We've detected an external IP {ip} and we can bind on it, so probably a dedicated IP.");
             ctx.log.log("🙂", &[&"myipaddr"], &msg);
             return Ok(ip);
         },
@@ -126,24 +123,21 @@ async fn detect_myipaddr(ctx: MmArc) -> Result<IpAddr, String> {
     }
     let all_interfaces = Ipv4Addr::new(0, 0, 0, 0).into();
     if test_ip(&ctx, all_interfaces).is_ok() {
-        let error = format!(
-            "We couldn't bind on the external IP {}, so NAT is likely to be present. We'll be okay though.",
-            ip
-        );
+        let error =
+            format!("We couldn't bind on the external IP {ip}, so NAT is likely to be present. We'll be okay though.");
         ctx.log.log("😅", &[&"myipaddr"], &error);
         return Ok(all_interfaces);
     }
     let localhost = Ipv4Addr::new(127, 0, 0, 1).into();
     if test_ip(&ctx, localhost).is_ok() {
         let error = format!(
-            "We couldn't bind on {} or 0.0.0.0! Looks like we can bind on 127.0.0.1 as a workaround, but that's not how we're supposed to work.",
-            ip
+            "We couldn't bind on {ip} or 0.0.0.0! Looks like we can bind on 127.0.0.1 as a workaround, but that's not how we're supposed to work."
         );
         ctx.log.log("🤫", &[&"myipaddr"], &error);
         return Ok(localhost);
     }
 
-    let error = format!("Couldn't bind on {}, 0.0.0.0 or 127.0.0.1.", ip);
+    let error = format!("Couldn't bind on {ip}, 0.0.0.0 or 127.0.0.1.");
     ctx.log.log("🤒", &[&"myipaddr"], &error);
     // Seems like a better default than 127.0.0.1, might still work for other ports.
     Ok(all_interfaces)
@@ -172,12 +166,10 @@ pub async fn myipaddr(ctx: MmArc) -> Result<IpAddr, String> {
 
 #[derive(Debug, Display)]
 pub enum ParseAddressError {
-    #[display(fmt = "Address/Seed {} resolved to IPv6 which is not supported", _0)]
-    UnsupportedIPv6Address(String),
-    #[display(fmt = "Address/Seed {} to_socket_addrs empty iter", _0)]
-    EmptyIterator(String),
-    #[display(fmt = "Couldn't resolve '{}' Address/Seed: {}", _0, _1)]
-    UnresolvedAddress(String, String),
+    #[display(fmt = "Address '{address}' cannot be resolved to IPv4.")]
+    CannotResolveIPv4 { address: String },
+    #[display(fmt = "Couldn't resolve any IP on '{address}' address. {reason}")]
+    UnresolvedAddress { address: String, reason: String },
 }
 
 pub fn addr_to_ipv4_string(address: &str) -> Result<String, MmError<ParseAddressError>> {
@@ -189,28 +181,54 @@ pub fn addr_to_ipv4_string(address: &str) -> Result<String, MmError<ParseAddress
         if formated_address.contains(':') { "" } else { ":0" }
     );
 
-    match address_with_port.as_str().to_socket_addrs() {
-        Ok(mut iter) => match iter.next() {
-            Some(addr) => {
-                if addr.is_ipv4() {
-                    Ok(addr.ip().to_string())
-                } else {
-                    log::warn!(
-                        "Address/Seed {} resolved to IPv6 {} which is not supported",
-                        address,
-                        addr
-                    );
-                    MmError::err(ParseAddressError::UnsupportedIPv6Address(address.into()))
-                }
-            },
-            None => {
-                log::warn!("Address/Seed {} to_socket_addrs empty iter", address);
-                MmError::err(ParseAddressError::EmptyIterator(address.into()))
-            },
-        },
-        Err(e) => {
-            log::error!("Couldn't resolve '{}' seed: {}", address, e);
-            MmError::err(ParseAddressError::UnresolvedAddress(address.into(), e.to_string()))
-        },
+    let iter = address_with_port.as_str().to_socket_addrs().map_to_mm(|e| {
+        log::error!("Couldn't resolve '{}' seed: {}", address, e);
+        ParseAddressError::UnresolvedAddress {
+            address: address.to_owned(),
+            reason: e.to_string(),
+        }
+    })?;
+
+    if iter.len() == 0 {
+        return MmError::err(ParseAddressError::UnresolvedAddress {
+            address: address.to_owned(),
+            reason: "Empty DNS result.".to_owned(),
+        });
     }
+
+    for resolved in iter {
+        if resolved.is_ipv4() {
+            return Ok(resolved.ip().to_string());
+        } else {
+            log::warn!(
+                "Address/Seed {} resolved to IPv6 {} which is not supported",
+                address,
+                resolved
+            );
+        }
+    }
+
+    MmError::err(ParseAddressError::CannotResolveIPv4 {
+        address: address.to_owned(),
+    })
+}
+
+/// Stable port of `Ipv4Addr::is_global` which should be removed once
+/// stabilized on std.
+pub fn is_global_ipv4(ip: &Ipv4Addr) -> bool {
+    !(ip.octets()[0] == 0 // "This network"
+            || ip.is_private()
+            || ip.octets()[0] == 100 && (ip.octets()[1] & 0b1100_0000 == 0b0100_0000)
+            || ip.is_loopback()
+            || ip.is_link_local()
+            // addresses reserved for future protocols (`192.0.0.0/24`)
+            // .9 and .10 are documented as globally reachable so they're excluded
+            || (
+                ip.octets()[0] == 192 && ip.octets()[1] == 0 && ip.octets()[2] == 0
+                && ip.octets()[3] != 9 && ip.octets()[3] != 10
+            )
+            || ip.is_documentation()
+            || ip.octets()[0] == 198 && (ip.octets()[1] & 0xfe) == 18
+            || ip.octets()[0] & 240 == 240 && !ip.is_broadcast()
+            || ip.is_broadcast())
 }

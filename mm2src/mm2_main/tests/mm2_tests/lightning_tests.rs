@@ -1,14 +1,20 @@
 use crate::integration_tests_common::{enable_coins_rick_morty_electrum, enable_electrum};
-use coins::lightning::ln_events::{CHANNEL_READY_LOG, PAYMENT_CLAIMABLE_LOG, SUCCESSFUL_CLAIM_LOG, SUCCESSFUL_SEND_LOG};
+use coins::lightning::ln_events::{
+    CHANNEL_READY_LOG, PAYMENT_CLAIMABLE_LOG, SUCCESSFUL_CLAIM_LOG, SUCCESSFUL_SEND_LOG,
+};
 use common::executor::Timer;
 use common::{block_on, log, wait_until_ms};
 use gstuff::now_ms;
 use http::StatusCode;
 use mm2_number::BigDecimal;
-use mm2_test_helpers::for_tests::{disable_coin, init_lightning, init_lightning_status, my_balance, sign_message,
-                                  start_swaps, verify_message, wait_for_swaps_finish_and_check_status, MarketMakerIt};
-use mm2_test_helpers::structs::{InitLightningStatus, InitTaskResult, LightningActivationResult, RpcV2Response,
-                                SignatureResponse, VerificationResponse};
+use mm2_test_helpers::for_tests::{
+    disable_coin, init_lightning, init_lightning_status, my_balance, sign_message, start_swaps, verify_message,
+    wait_for_swaps_finish_and_check_status, MarketMakerIt,
+};
+use mm2_test_helpers::structs::{
+    InitLightningStatus, InitTaskResult, LightningActivationResult, RpcV2Response, SignatureResponse,
+    VerificationResponse,
+};
 use serde_json::{self as json, json, Value as Json};
 use std::env;
 use std::str::FromStr;
@@ -112,6 +118,7 @@ fn start_lightning_nodes(enable_0_confs: bool) -> (MarketMakerIt, MarketMakerIt,
             "coins": coins,
             "rpc_password": "pass",
             "i_am_seed": true,
+            "is_bootstrap_node": true
         }),
         "pass".into(),
         None,
@@ -163,7 +170,6 @@ async fn open_channel(
     let request = mm
         .rpc(&json!({
             "userpass": mm.userpass,
-            "mmrpc": "2.0",
             "method": "lightning::channels::open_channel",
             "params": {
                 "coin": coin,
@@ -186,7 +192,7 @@ async fn open_channel(
     let res: Json = json::from_str(&request.1).unwrap();
     let uuid = res["result"]["uuid"].as_str().unwrap();
     if wait_for_ready_signal {
-        mm.wait_for_log(3600., |log| log.contains(&format!("{}: {}", CHANNEL_READY_LOG, uuid)))
+        mm.wait_for_log(3600., |log| log.contains(&format!("{CHANNEL_READY_LOG}: {uuid}")))
             .await
             .unwrap();
     }
@@ -197,7 +203,6 @@ async fn close_channel(mm: &MarketMakerIt, uuid: &str, force_close: bool) -> Jso
     let request = mm
         .rpc(&json!({
             "userpass": mm.userpass,
-            "mmrpc": "2.0",
             "method": "lightning::channels::close_channel",
             "params": {
                 "coin": "tBTC-TEST-lightning",
@@ -221,7 +226,6 @@ async fn add_trusted_node(mm: &MarketMakerIt, node_id: &str) -> Json {
     let request = mm
         .rpc(&json!({
             "userpass": mm.userpass,
-            "mmrpc": "2.0",
             "method": "lightning::nodes::add_trusted_node",
             "params": {
                 "coin": "tBTC-TEST-lightning",
@@ -243,7 +247,6 @@ async fn generate_invoice(mm: &MarketMakerIt, amount_in_msat: u64) -> Json {
     let request = mm
         .rpc(&json!({
             "userpass": mm.userpass,
-            "mmrpc": "2.0",
             "method": "lightning::payments::generate_invoice",
             "params": {
                 "coin": "tBTC-TEST-lightning",
@@ -267,7 +270,6 @@ async fn pay_invoice(mm: &MarketMakerIt, invoice: &str) -> Json {
     let request = mm
         .rpc(&json!({
             "userpass": mm.userpass,
-            "mmrpc": "2.0",
             "method": "lightning::payments::send_payment",
             "params": {
                 "coin": "tBTC-TEST-lightning",
@@ -293,7 +295,6 @@ async fn get_payment_details(mm: &MarketMakerIt, payment_hash: &str) -> Json {
     let request = mm
         .rpc(&json!({
           "userpass": mm.userpass,
-          "mmrpc": "2.0",
           "method": "lightning::payments::get_payment_details",
           "params": {
               "coin": "tBTC-TEST-lightning",
@@ -368,6 +369,7 @@ fn test_enable_lightning() {
             "coins": coins,
             "i_am_seed": true,
             "rpc_password": "pass",
+            "is_bootstrap_node": true
         }),
         "pass".into(),
         None,
@@ -428,7 +430,6 @@ fn test_connect_to_node() {
 
     let connect = block_on(mm_node_2.rpc(&json!({
         "userpass": mm_node_2.userpass,
-        "mmrpc": "2.0",
         "method": "lightning::nodes::connect_to_node",
         "params": {
             "coin": "tBTC-TEST-lightning",
@@ -442,7 +443,7 @@ fn test_connect_to_node() {
         connect.1
     );
     let connect_res: Json = json::from_str(&connect.1).unwrap();
-    let expected = format!("Connected successfully to node : {}", node_1_address);
+    let expected = format!("Connected successfully to node : {node_1_address}");
     assert_eq!(connect_res["result"], expected);
 
     block_on(mm_node_1.stop()).unwrap();
@@ -468,7 +469,6 @@ fn test_open_channel() {
 
     let list_channels_node_1 = block_on(mm_node_1.rpc(&json!({
         "userpass": mm_node_1.userpass,
-        "mmrpc": "2.0",
         "method": "lightning::channels::list_open_channels_by_filter",
         "params": {
             "coin": "tBTC-TEST-lightning",
@@ -497,7 +497,6 @@ fn test_open_channel() {
 
     let list_channels_node_2 = block_on(mm_node_2.rpc(&json!({
       "userpass": mm_node_2.userpass,
-      "mmrpc": "2.0",
       "method": "lightning::channels::list_open_channels_by_filter",
       "params": {
           "coin": "tBTC-TEST-lightning",
@@ -547,7 +546,6 @@ fn test_send_payment() {
 
     let send_payment = block_on(mm_node_2.rpc(&json!({
         "userpass": mm_node_2.userpass,
-        "mmrpc": "2.0",
         "method": "lightning::payments::send_payment",
         "params": {
             "coin": "tBTC-TEST-lightning",
@@ -596,7 +594,7 @@ fn test_send_payment() {
 
     block_on(mm_node_1.wait_for_log(60., |log| log.contains(SUCCESSFUL_CLAIM_LOG))).unwrap();
     block_on(mm_node_2.wait_for_log(60., |log| {
-        log.contains(&format!("{} with payment hash {}", SUCCESSFUL_SEND_LOG, payment_hash))
+        log.contains(&format!("{SUCCESSFUL_SEND_LOG} with payment hash {payment_hash}"))
     }))
     .unwrap();
 
@@ -658,7 +656,7 @@ fn test_mpp() {
 
     block_on(mm_node_1.wait_for_log(60., |log| log.contains(SUCCESSFUL_CLAIM_LOG))).unwrap();
     block_on(mm_node_2.wait_for_log(60., |log| {
-        log.contains(&format!("{} with payment hash {}", SUCCESSFUL_SEND_LOG, payment_hash))
+        log.contains(&format!("{SUCCESSFUL_SEND_LOG} with payment hash {payment_hash}"))
     }))
     .unwrap();
 
@@ -1055,6 +1053,7 @@ fn test_sign_verify_message_lightning() {
             "coins": coins,
             "i_am_seed": true,
             "rpc_password": "pass",
+            "is_bootstrap_node": true
         }),
         "pass".into(),
         None,
@@ -1066,7 +1065,7 @@ fn test_sign_verify_message_lightning() {
     block_on(enable_electrum(&mm, "tBTC-TEST-segwit", false, T_BTC_ELECTRUMS));
     block_on(enable_lightning(&mm, "tBTC-TEST-lightning", 600));
 
-    let response = block_on(sign_message(&mm, "tBTC-TEST-lightning"));
+    let response = block_on(sign_message(&mm, "tBTC-TEST-lightning", None));
     let response: RpcV2Response<SignatureResponse> = json::from_value(response).unwrap();
     let response = response.result;
 

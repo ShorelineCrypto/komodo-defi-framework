@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 use common::log::warn;
-use crypto::{Bip32DerPathOps, Bip32Error, Bip44Chain, ChildNumber, DerivationPath, HDPathToAccount, HDPathToCoin,
-             Secp256k1ExtendedPublicKey, StandardHDPath, StandardHDPathError};
+use crypto::{
+    Bip32DerPathOps, Bip32Error, Bip44Chain, ChildNumber, DerivationPath, HDPathToAccount, HDPathToCoin,
+    Secp256k1ExtendedPublicKey, StandardHDPath, StandardHDPathError,
+};
 use futures::lock::{MappedMutexGuard as AsyncMappedMutexGuard, Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 use mm2_err_handle::prelude::*;
 use primitives::hash::H160;
@@ -28,9 +30,11 @@ pub(crate) use confirm_address::{ConfirmAddressStatus, RpcTaskConfirmAddress};
 pub use confirm_address::{HDConfirmAddress, HDConfirmAddressError};
 
 mod errors;
-pub use errors::{AccountUpdatingError, AddressDerivingError, HDExtractPubkeyError, HDWithdrawError,
-                 InvalidBip44ChainError, NewAccountCreationError, NewAddressDeriveConfirmError,
-                 NewAddressDerivingError, TrezorCoinError};
+pub use errors::{
+    AccountUpdatingError, AddressDerivingError, HDExtractPubkeyError, HDWithdrawError, InvalidBip44ChainError,
+    NewAccountCreationError, NewAddressDeriveConfirmError, NewAddressDerivingError, SettingEnabledAddressError,
+    TrezorCoinError,
+};
 
 mod pubkey;
 pub use pubkey::{ExtendedPublicKeyOps, ExtractExtendedPubkey, HDXPubExtractor, RpcTaskXPubExtractor};
@@ -38,16 +42,19 @@ pub use pubkey::{ExtendedPublicKeyOps, ExtractExtendedPubkey, HDXPubExtractor, R
 mod storage;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use storage::HDWalletDb;
-#[cfg(test)] pub(crate) use storage::HDWalletMockStorage;
-pub use storage::{HDAccountStorageItem, HDAccountStorageOps, HDWalletCoinStorage, HDWalletId, HDWalletStorageError,
-                  HDWalletStorageOps};
+#[cfg(test)]
+pub(crate) use storage::HDWalletMockStorage;
+pub use storage::{
+    HDAccountStorageItem, HDAccountStorageOps, HDWalletCoinStorage, HDWalletId, HDWalletStorageError,
+    HDWalletStorageOps,
+};
 pub(crate) use storage::{HDWalletStorageInternalOps, HDWalletStorageResult};
 
 mod wallet_ops;
 pub use wallet_ops::HDWalletOps;
 
 mod withdraw_ops;
-pub use withdraw_ops::{HDCoinWithdrawOps, WithdrawFrom, WithdrawSenderAddress};
+pub use withdraw_ops::{HDCoinWithdrawOps, WithdrawSenderAddress};
 
 pub(crate) type HDAccountsMap<HDAccount> = BTreeMap<u32, HDAccount>;
 pub(crate) type HDAccountsMutex<HDAccount> = AsyncMutex<HDAccountsMap<HDAccount>>;
@@ -84,11 +91,17 @@ where
     type Address = Address;
     type Pubkey = Pubkey;
 
-    fn address(&self) -> Self::Address { self.address.clone() }
+    fn address(&self) -> Self::Address {
+        self.address.clone()
+    }
 
-    fn pubkey(&self) -> Self::Pubkey { self.pubkey.clone() }
+    fn pubkey(&self) -> Self::Pubkey {
+        self.pubkey.clone()
+    }
 
-    fn derivation_path(&self) -> &DerivationPath { &self.derivation_path }
+    fn derivation_path(&self) -> &DerivationPath {
+        &self.derivation_path
+    }
 }
 
 /// A generic HD address that can be used with any HD wallet.
@@ -112,7 +125,9 @@ impl<HDAddress> HDAddressesCache<HDAddress> {
         }
     }
 
-    pub async fn lock(&self) -> AsyncMutexGuard<'_, HashMap<HDAddressId, HDAddress>> { self.cache.lock().await }
+    pub async fn lock(&self) -> AsyncMutexGuard<'_, HashMap<HDAddressId, HDAddress>> {
+        self.cache.lock().await
+    }
 }
 
 /// A generic HD account that can be used with any HD wallet.
@@ -164,7 +179,9 @@ where
         }
     }
 
-    fn address_limit(&self) -> u32 { DEFAULT_ADDRESS_LIMIT }
+    fn address_limit(&self) -> u32 {
+        DEFAULT_ADDRESS_LIMIT
+    }
 
     fn known_addresses_number(&self, chain: Bip44Chain) -> MmResult<u32, InvalidBip44ChainError> {
         match chain {
@@ -184,18 +201,26 @@ where
         }
     }
 
-    fn account_derivation_path(&self) -> DerivationPath { self.account_derivation_path.to_derivation_path() }
+    fn account_derivation_path(&self) -> DerivationPath {
+        self.account_derivation_path.to_derivation_path()
+    }
 
-    fn account_id(&self) -> u32 { self.account_id }
+    fn account_id(&self) -> u32 {
+        self.account_id
+    }
 
     fn is_address_activated(&self, chain: Bip44Chain, address_id: u32) -> MmResult<bool, InvalidBip44ChainError> {
         let is_activated = address_id < self.known_addresses_number(chain)?;
         Ok(is_activated)
     }
 
-    fn derived_addresses(&self) -> &HDAddressesCache<Self::HDAddress> { &self.derived_addresses }
+    fn derived_addresses(&self) -> &HDAddressesCache<Self::HDAddress> {
+        &self.derived_addresses
+    }
 
-    fn extended_pubkey(&self) -> &Self::ExtendedPublicKey { &self.extended_pubkey }
+    fn extended_pubkey(&self) -> &Self::ExtendedPublicKey {
+        &self.extended_pubkey
+    }
 }
 
 impl<HDAddress, ExtendedPublicKey> HDAccountStorageOps for HDAccount<HDAddress, ExtendedPublicKey>
@@ -216,7 +241,8 @@ where
         let account_child = ChildNumber::new(account_info.account_id, ACCOUNT_CHILD_HARDENED)?;
         let account_derivation_path = wallet_der_path
             .derive(account_child)
-            .map_to_mm(StandardHDPathError::from)?;
+            .map_to_mm(StandardHDPathError::from)
+            .map_mm_err()?;
         let extended_pubkey = ExtendedPublicKey::from_str(&account_info.account_xpub)
             .map_err(|e| HDWalletStorageError::ErrorDeserializing(e.to_string()))?;
         let capacity =
@@ -275,7 +301,7 @@ where
 #[derive(Debug)]
 pub struct HDWallet<HDAccount>
 where
-    HDAccount: HDAccountOps + Clone + Send + Sync,
+    HDAccount: HDAccountOps + Send + Sync,
 {
     /// A unique identifier for the HD wallet derived from the master public key.
     /// Specifically, it's the RIPEMD160 hash of the SHA256 hash of the master pubkey.
@@ -307,17 +333,29 @@ where
 {
     type HDAccount = HDAccount;
 
-    fn coin_type(&self) -> u32 { self.derivation_path.coin_type() }
+    fn coin_type(&self) -> u32 {
+        self.derivation_path.coin_type()
+    }
 
-    fn derivation_path(&self) -> &HDPathToCoin { &self.derivation_path }
+    fn derivation_path(&self) -> &HDPathToCoin {
+        &self.derivation_path
+    }
 
-    fn gap_limit(&self) -> u32 { self.gap_limit }
+    fn gap_limit(&self) -> u32 {
+        self.gap_limit
+    }
 
-    fn account_limit(&self) -> u32 { DEFAULT_ACCOUNT_LIMIT }
+    fn account_limit(&self) -> u32 {
+        DEFAULT_ACCOUNT_LIMIT
+    }
 
-    fn default_receiver_chain(&self) -> Bip44Chain { DEFAULT_RECEIVER_CHAIN }
+    fn default_receiver_chain(&self) -> Bip44Chain {
+        DEFAULT_RECEIVER_CHAIN
+    }
 
-    fn get_accounts_mutex(&self) -> &HDAccountsMutex<Self::HDAccount> { &self.accounts }
+    fn get_accounts_mutex(&self) -> &HDAccountsMutex<Self::HDAccount> {
+        &self.accounts
+    }
 
     async fn get_account(&self, account_id: u32) -> Option<Self::HDAccount> {
         let accounts = self.get_accounts_mutex().lock().await;
@@ -337,9 +375,13 @@ where
         }))
     }
 
-    async fn get_accounts(&self) -> HDAccountsMap<Self::HDAccount> { self.get_accounts_mutex().lock().await.clone() }
+    async fn get_accounts(&self) -> HDAccountsMap<Self::HDAccount> {
+        self.get_accounts_mutex().lock().await.clone()
+    }
 
-    async fn get_accounts_mut(&self) -> HDAccountsMut<'_, Self::HDAccount> { self.get_accounts_mutex().lock().await }
+    async fn get_accounts_mut(&self) -> HDAccountsMut<'_, Self::HDAccount> {
+        self.get_accounts_mutex().lock().await
+    }
 
     async fn remove_account_if_last(&self, account_id: u32) -> Option<Self::HDAccount> {
         let mut x = self.get_accounts_mutex().lock().await;
@@ -416,20 +458,22 @@ where
     let account_derivation_path: HDPathToAccount = hd_wallet.derivation_path().derive(account_child)?;
     let account_pubkey = coin
         .extract_extended_pubkey(xpub_extractor, account_derivation_path.to_derivation_path())
-        .await?;
+        .await
+        .map_mm_err()?;
 
     let new_account = HDAccount::new(new_account_id, account_pubkey, account_derivation_path);
 
     let accounts = hd_wallet.get_accounts_mut().await;
     if accounts.contains_key(&new_account_id) {
-        let error = format!(
-            "Account '{}' has been activated while we proceed the 'create_new_account' function",
-            new_account_id
-        );
+        let error =
+            format!("Account '{new_account_id}' has been activated while we proceed the 'create_new_account' function");
         return MmError::err(NewAccountCreationError::Internal(error));
     }
 
-    hd_wallet.upload_new_account(new_account.to_storage_item()).await?;
+    hd_wallet
+        .upload_new_account(new_account.to_storage_item())
+        .await
+        .map_mm_err()?;
 
     Ok(AsyncMutexGuard::map(accounts, |accounts| {
         accounts
@@ -444,7 +488,9 @@ impl<HDAccount> HDWalletStorageOps for HDWallet<HDAccount>
 where
     HDAccount: HDAccountOps + HDAccountStorageOps + Clone + Send + Sync,
 {
-    fn hd_wallet_storage(&self) -> &HDWalletCoinStorage { &self.hd_wallet_storage }
+    fn hd_wallet_storage(&self) -> &HDWalletCoinStorage {
+        &self.hd_wallet_storage
+    }
 }
 
 /// Unique identifier for an HD wallet address within the whole wallet context.
@@ -485,6 +531,63 @@ impl HDPathAccountToAddressId {
         Ok(account_der_path)
     }
 }
+/// Represents how a hierarchical deterministic (HD) address is selected.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum HDAddressSelector {
+    /// Specifies the HD address using its structured account, chain, and address ID.
+    AddressId(HDPathAccountToAddressId),
+    /// Specifies the HD address directly using a BIP-44,84 and other compliant derivation path.
+    ///
+    /// IMPORTANT: Don't use `Bip44DerivationPath` or `RpcDerivationPath` because if there is an error in the path,
+    /// `serde::Deserialize` returns "data did not match any variant of untagged enum HDAddressSelector".
+    /// It's better to show the user an informative error.
+    DerivationPath { derivation_path: String },
+}
+
+impl HDAddressSelector {
+    pub fn to_address_path(&self, expected_coin_type: u32) -> MmResult<HDPathAccountToAddressId, StandardHDPathError> {
+        match self {
+            HDAddressSelector::AddressId(address_id) => Ok(*address_id),
+            HDAddressSelector::DerivationPath { derivation_path } => {
+                let derivation_path = StandardHDPath::from_str(derivation_path).map_to_mm(StandardHDPathError::from)?;
+                let coin_type = derivation_path.coin_type();
+
+                if coin_type != expected_coin_type {
+                    return MmError::err(StandardHDPathError::InvalidCoinType {
+                        expected: expected_coin_type,
+                        found: coin_type,
+                    });
+                }
+
+                Ok(HDPathAccountToAddressId::from(derivation_path))
+            },
+        }
+    }
+
+    pub fn valid_derivation_path(self, path_to_coin: &HDPathToCoin) -> MmResult<DerivationPath, StandardHDPathError> {
+        match self {
+            HDAddressSelector::AddressId(id) => id
+                .to_derivation_path(path_to_coin)
+                .mm_err(StandardHDPathError::Bip32Error),
+            HDAddressSelector::DerivationPath { derivation_path } => {
+                let standard_hd_path = StandardHDPath::from_str(&derivation_path)
+                    .map_to_mm(|_| StandardHDPathError::Bip32Error(Bip32Error::Decode))?;
+                let rpc_path_to_coin = standard_hd_path.path_to_coin();
+
+                // validate rpc path_to_coin against activated coin.
+                if &rpc_path_to_coin != path_to_coin {
+                    return MmError::err(StandardHDPathError::InvalidPathToCoin {
+                        expected: rpc_path_to_coin.to_string(),
+                        found: path_to_coin.to_string(),
+                    });
+                };
+
+                Ok(standard_hd_path.to_derivation_path())
+            },
+        }
+    }
+}
 
 pub(crate) mod inner_impl {
     use super::*;
@@ -507,14 +610,17 @@ pub(crate) mod inner_impl {
     where
         Coin: HDWalletCoinOps + ?Sized + Sync,
     {
-        let known_addresses_number = hd_account.known_addresses_number(chain)?;
+        let known_addresses_number = hd_account.known_addresses_number(chain).map_mm_err()?;
         // Address IDs start from 0, so the `known_addresses_number = last_known_address_id + 1`.
         let new_address_id = known_addresses_number;
         let max_addresses_number = hd_account.address_limit();
         if new_address_id >= max_addresses_number {
             return MmError::err(NewAddressDerivingError::AddressLimitReached { max_addresses_number });
         }
-        let address = coin.derive_address(hd_account, chain, new_address_id).await?;
+        let address = coin
+            .derive_address(hd_account, chain, new_address_id)
+            .await
+            .map_mm_err()?;
         Ok(NewAddress {
             hd_address: address,
             new_known_addresses_number: known_addresses_number + 1,
