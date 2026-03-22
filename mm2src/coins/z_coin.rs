@@ -1013,8 +1013,10 @@ impl UtxoCoinBuilder for ZCoinBuilder<'_> {
             )
             .await
             .map_mm_err()?,
-            #[cfg(test)]
+            #[cfg(all(test, not(target_arch = "wasm32")))]
             ZcoinRpcMode::UnitTests => z_unit_tests::create_test_sync_connector(&self).await,
+            #[cfg(all(test, target_arch = "wasm32"))]
+            ZcoinRpcMode::UnitTests => unreachable!("UnitTests mode is not supported on WASM"),
         };
 
         let z_fields = Arc::new(ZCoinFields {
@@ -1700,12 +1702,7 @@ impl SwapOps for ZCoin {
     }
 
     #[inline]
-    async fn extract_secret(
-        &self,
-        secret_hash: &[u8],
-        spend_tx: &[u8],
-        _watcher_reward: bool,
-    ) -> Result<[u8; 32], String> {
+    async fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<[u8; 32], String> {
         utxo_common::extract_secret(secret_hash, spend_tx)
     }
 
@@ -1950,7 +1947,7 @@ impl UtxoCommonOps for ZCoin {
         utxo_common::denominate_satoshis(&self.utxo_arc, satoshi)
     }
 
-    fn my_public_key(&self) -> Result<&Public, MmError<UnexpectedDerivationMethod>> {
+    fn my_public_key(&self) -> Result<Public, MmError<UnexpectedDerivationMethod>> {
         utxo_common::my_public_key(self.as_ref())
     }
 
@@ -1988,7 +1985,7 @@ impl UtxoCommonOps for ZCoin {
         utxo_common::get_mut_verbose_transaction_from_map_or_rpc(self, tx_hash, utxo_tx_map).await
     }
 
-    async fn p2sh_spending_tx(&self, input: utxo_common::P2SHSpendingTxInput<'_>) -> Result<UtxoTx, String> {
+    async fn p2sh_spending_tx(&self, input: utxo_common::P2SHSpendingTxInput) -> Result<UtxoTx, String> {
         utxo_common::p2sh_spending_tx(self, input).await
     }
 
