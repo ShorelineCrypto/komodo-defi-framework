@@ -2,7 +2,10 @@ name: Release builds
 on:
   push:
     branches:
-      - main
+      - cheetahdex
+  pull_request:
+    branches:
+      - cheetahdex
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

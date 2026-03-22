@@ -1,8 +1,11 @@
 name: Development builds
 on:
   push:
-    branches-ignore:
-      - main
+    branches:
+      - cheetah
+  pull_request:
+    branches:
+      - cheetah
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
