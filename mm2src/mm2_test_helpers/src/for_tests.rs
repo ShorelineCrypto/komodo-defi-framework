@@ -168,6 +168,22 @@ pub const TAKER_ERROR_EVENTS: [&str; 17] = [
     "TakerPaymentRefundFinished",
 ];
 
+/// Legacy DEX fee public key - used in tests to validate historical transactions
+/// that were sent to the old fee address before the fee update.
+pub const DEX_FEE_ADDR_PUBKEY_LEGACY: &str = "03bc2c7ba671bae4a6fc835244c9762b41647b9827d4780a89a949b984a8ddcc06";
+/// Legacy DEX burn public key - used in tests to validate historical transactions
+/// that were sent to the old burn address before the fee update.
+pub const DEX_BURN_ADDR_PUBKEY_LEGACY: &str = "0369aa10c061cd9e085f4adb7399375ba001b54136145cb748eb4c48657be13153";
+
+lazy_static! {
+    /// Legacy DEX fee raw pubkey bytes for test fixtures
+    pub static ref DEX_FEE_ADDR_RAW_PUBKEY_LEGACY: Vec<u8> =
+        hex::decode(DEX_FEE_ADDR_PUBKEY_LEGACY).expect("DEX_FEE_ADDR_PUBKEY_LEGACY is expected to be a hexadecimal string");
+    /// Legacy DEX burn raw pubkey bytes for test fixtures
+    pub static ref DEX_BURN_ADDR_RAW_PUBKEY_LEGACY: Vec<u8> =
+        hex::decode(DEX_BURN_ADDR_PUBKEY_LEGACY).expect("DEX_BURN_ADDR_PUBKEY_LEGACY is expected to be a hexadecimal string");
+}
+
 pub const RICK: &str = "RICK";
 pub const RICK_ELECTRUM_ADDRS: &[&str] = &[
     "electrum1.cipig.net:10017",
@@ -265,7 +281,7 @@ pub const BCHD_TESTNET_URLS: &[&str] = &["https://bchd-testnet.greyh.at:18335"];
 
 /// TRON Nile testnet RPC nodes.
 /// Nile is recommended over Shasta for more flexibility with RPC providers.
-pub const TRON_NILE_NODES: &[&str] = &["https://nile.trongrid.io"];
+pub const TRON_NILE_NODES: &[&str] = &["https://api.nileex.io", "https://nile.trongrid.io"];
 
 /// Known TRON testnet address that is always "activated" (zero address equivalent).
 /// This is the TRON network foundation address on testnet that has activity.
@@ -282,6 +298,13 @@ pub const TRON_NILE_TRC20_USDT_CONTRACT: &str = "TXYZopYRdj2D9XRtbG411XZZ3kM5VkA
 
 /// TRC20 test token ticker for tests.
 pub const TRON_NILE_TRC20_USDT_TICKER: &str = "USDT-TRC20-NILE";
+
+/// Mnemonic used by TRON withdraw integration tests (Nile).
+/// Index 0: TDcxD6E5wTzvqCJd4RfkGfw9NkCBdvYcV9 (50 TRX + 10 USDT)
+/// Index 1: TW9RqU6bTJnM4quyRbvTwm3xfSHgk718qU (20 TRX + 5 USDT)
+/// Index 2: TVK3ruiuNxN4sRJtSThDW7PGHrwYPYQ1UC (unfunded)
+pub const TRON_WITHDRAW_TEST_PASSPHRASE: &str =
+    "inject night leg month assume task power city until switch movie develop";
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
