@@ -26,7 +26,10 @@
     clippy::swap_ptr_to_ref,
     clippy::forget_non_drop,
     clippy::doc_lazy_continuation,
-    clippy::needless_lifetimes // mocktopus requires explicit lifetimes
+    clippy::needless_lifetimes, // mocktopus requires explicit lifetimes
+    // TODO: Remove this allow when Rust 1.92 regression is fixed.
+    // See: https://github.com/rust-lang/rust/issues/147648
+    unused_assignments
 )]
 #![allow(uncommon_codepoints)]
 
@@ -187,7 +190,7 @@ macro_rules! try_tx_s {
 
 /// `TransactionErr:Plain` compatible `ERR` macro.
 macro_rules! TX_PLAIN_ERR {
-    ($format: expr, $($args: tt)+) => { Err(crate::TransactionErr::Plain((ERRL!($format, $($args)+)))) };
+    ($format: expr, $($args: tt)+) => { Err(crate::TransactionErr::Plain(ERRL!($format, $($args)+))) };
     ($format: expr) => { Err(crate::TransactionErr::Plain(ERRL!($format))) }
 }
 
@@ -852,7 +855,6 @@ pub struct SearchForSwapTxSpendInput<'a> {
     pub search_from_block: u64,
     pub swap_contract_address: &'a Option<BytesJson>,
     pub swap_unique_data: &'a [u8],
-    pub watcher_reward: bool,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1177,12 +1179,7 @@ pub trait SwapOps {
         input: SearchForSwapTxSpendInput<'_>,
     ) -> Result<Option<FoundSwapTxSpend>, String>;
 
-    async fn extract_secret(
-        &self,
-        secret_hash: &[u8],
-        spend_tx: &[u8],
-        watcher_reward: bool,
-    ) -> Result<[u8; 32], String>;
+    async fn extract_secret(&self, secret_hash: &[u8], spend_tx: &[u8]) -> Result<[u8; 32], String>;
 
     /// Whether the refund transaction can be sent now
     /// For example: there are no additional conditions for ETH, but for some UTXO coins we should wait for
@@ -2873,8 +2870,8 @@ pub enum TradePreimageError {
     #[from_stringify("NumConversError", "UnexpectedDerivationMethod")]
     #[display(fmt = "Internal error: {_0}")]
     InternalError(String),
-    #[display(fmt = "Nft Protocol is not supported yet!")]
-    NftProtocolNotSupported,
+    #[display(fmt = "Protocol not supported: {_0}")]
+    ProtocolNotSupported(String),
     #[display(fmt = "No such coin {}", coin)]
     NoSuchCoin { coin: String },
 }
@@ -3366,8 +3363,8 @@ pub enum WithdrawError {
         my_address: String,
         token_owner: String,
     },
-    #[display(fmt = "Nft Protocol is not supported yet!")]
-    NftProtocolNotSupported,
+    #[display(fmt = "Protocol not supported: {_0}")]
+    ProtocolNotSupported(String),
     #[display(fmt = "Chain id must be set for typed transaction for coin {coin}")]
     NoChainIdSet {
         coin: String,
@@ -3412,7 +3409,7 @@ impl HttpStatusCode for WithdrawError {
             WithdrawError::HwError(_) => StatusCode::GONE,
             #[cfg(target_arch = "wasm32")]
             WithdrawError::BroadcastExpected(_) => StatusCode::BAD_REQUEST,
-            WithdrawError::InternalError(_) | WithdrawError::DbError(_) | WithdrawError::NftProtocolNotSupported => {
+            WithdrawError::InternalError(_) | WithdrawError::DbError(_) | WithdrawError::ProtocolNotSupported(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             },
             WithdrawError::Transport(_) => StatusCode::BAD_GATEWAY,
@@ -3511,7 +3508,7 @@ impl From<EthGasDetailsErr> for WithdrawError {
             },
             EthGasDetailsErr::Internal(e) => WithdrawError::InternalError(e),
             EthGasDetailsErr::Transport(e) => WithdrawError::Transport(e),
-            EthGasDetailsErr::NftProtocolNotSupported => WithdrawError::NftProtocolNotSupported,
+            EthGasDetailsErr::ProtocolNotSupported(e) => WithdrawError::ProtocolNotSupported(e),
             EthGasDetailsErr::NoSuchCoin { coin } => WithdrawError::NoSuchCoin { coin },
         }
     }
@@ -4655,6 +4652,10 @@ impl<T> PrivKeyPolicy<T> {
     fn is_trezor(&self) -> bool {
         matches!(self, PrivKeyPolicy::Trezor)
     }
+
+    fn is_internal(&self) -> bool {
+        matches!(self, PrivKeyPolicy::Iguana(_) | PrivKeyPolicy::HDWallet { .. })
+    }
 }
 
 /// 'CoinWithPrivKeyPolicy' trait is used to get the private key policy of a coin.
@@ -4893,7 +4894,7 @@ pub struct UtxoProtocolInfo {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "type", content = "protocol_data")]
 pub enum CoinProtocol {
-    // TODO: Nest this option deep into the innert struct fields when more fields are added to the UTXO protocol info.
+    // TODO: Nest this option deep into the inner struct fields when more fields are added to the UTXO protocol info.
     UTXO(Option<UtxoProtocolInfo>),
     QTUM,
     QRC20 {
@@ -4912,7 +4913,11 @@ pub enum CoinProtocol {
     TRX {
         network: eth::tron::Network,
     },
-    // Todo: Add TRC20, Do we need to support TRC10?
+    TRC20 {
+        platform: String,
+        contract_address: String,
+    },
+    // Todo: Do we need to support TRC10?
     SLPTOKEN {
         platform: String,
         token_id: H256Json,
@@ -4967,6 +4972,7 @@ impl CoinProtocol {
         match self {
             CoinProtocol::QRC20 { platform, .. }
             | CoinProtocol::ERC20 { platform, .. }
+            | CoinProtocol::TRC20 { platform, .. }
             | CoinProtocol::SLPTOKEN { platform, .. }
             | CoinProtocol::NFT { platform, .. } => Some(platform),
             CoinProtocol::TENDERMINTTOKEN(info) => Some(&info.platform),
@@ -4988,9 +4994,9 @@ impl CoinProtocol {
     /// Returns the contract address associated with the coin, if any.
     pub fn contract_address(&self) -> Option<String> {
         match self {
-            CoinProtocol::QRC20 { contract_address, .. } | CoinProtocol::ERC20 { contract_address, .. } => {
-                Some(contract_address.clone())
-            },
+            CoinProtocol::QRC20 { contract_address, .. }
+            | CoinProtocol::ERC20 { contract_address, .. }
+            | CoinProtocol::TRC20 { contract_address, .. } => Some(contract_address.clone()),
             CoinProtocol::SLPTOKEN { .. }
             | CoinProtocol::UTXO { .. }
             | CoinProtocol::QTUM
@@ -5352,6 +5358,7 @@ pub async fn lp_coininit(ctx: &MmArc, ticker: &str, req: &Json) -> Result<MmCoin
         CoinProtocol::ZHTLC { .. } => return ERR!("ZHTLC protocol is not supported by lp_coininit"),
         CoinProtocol::NFT { .. } => return ERR!("NFT protocol is not supported by lp_coininit"),
         CoinProtocol::TRX { .. } => return ERR!("TRX protocol is not supported by lp_coininit"),
+        CoinProtocol::TRC20 { .. } => return ERR!("TRC20 protocol is not supported by lp_coininit"),
         #[cfg(not(target_arch = "wasm32"))]
         CoinProtocol::LIGHTNING { .. } => return ERR!("Lightning protocol is not supported by lp_coininit"),
         CoinProtocol::SIA => {
@@ -5969,8 +5976,13 @@ pub fn address_by_coin_conf_and_pubkey_str(
         CoinProtocol::ERC20 { .. } | CoinProtocol::ETH { .. } | CoinProtocol::NFT { .. } => {
             eth::addr_from_pubkey_str(pubkey)
         },
-        // Todo: implement TRX address generation
-        CoinProtocol::TRX { .. } => ERR!("TRX address generation is not implemented yet"),
+        CoinProtocol::TRX { .. } | CoinProtocol::TRC20 { .. } => {
+            let pubkey_hex = pubkey.strip_prefix("0x").unwrap_or(pubkey);
+            let pubkey_bytes = hex::decode(pubkey_hex).map_err(|e| ERRL!("{}", e))?;
+            let raw_addr = eth::addr_from_raw_pubkey(&pubkey_bytes)?;
+            let tron_addr = eth::tron::TronAddress::from(raw_addr);
+            Ok(tron_addr.to_base58())
+        },
         CoinProtocol::UTXO { .. } | CoinProtocol::QTUM | CoinProtocol::QRC20 { .. } | CoinProtocol::BCH { .. } => {
             utxo::address_by_conf_and_pubkey_str(coin, conf, pubkey, addr_format)
         },
