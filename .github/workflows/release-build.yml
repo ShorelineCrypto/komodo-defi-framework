@@ -5,7 +5,8 @@ on:
       - cheetahdex
   pull_request:
     branches:
-      - [cheetah, cheetahdex]
+      - cheetah
+      - cheetahdex
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
