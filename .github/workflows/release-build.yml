@@ -78,7 +78,7 @@ jobs:
 
       - name: Build and push container image
         run: |
-          export CONTAINER_TAG=$(./target/release/kdf --version | awk '{print $3}')
+          export CONTAINER_TAG=$(./target/release/kdf --version | awk '{print $4}')
           docker build -t shorelinecrypto/komodo-defi-framework:"$CONTAINER_TAG" -t komodoofficial/komodo-defi-framework:main-latest -f .docker/Dockerfile.release .
           docker push shorelinecrypto/komodo-defi-framework:"$CONTAINER_TAG"
           docker push shorelinecrypto/komodo-defi-framework:main-latest
