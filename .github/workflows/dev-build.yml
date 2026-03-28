@@ -131,7 +131,7 @@ jobs:
           AVAILABLE: ${{ secrets.FILE_SERVER_KEY }}
         if: ${{ env.AVAILABLE != '' }}
         run: |
-          NAME="kdf_$KDF_BUILD_TAG-linux-x86-64.zip"
+          NAME="kdf_$KDF_BUILD_TAG-linux-arm64.zip"
           zip $NAME target/release/kdf -j
           SAFE_DIR_NAME=$(echo "$BRANCH_NAME" | tr '/' '-')
           mkdir $SAFE_DIR_NAME
