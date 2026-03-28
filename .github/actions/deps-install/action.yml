@@ -12,21 +12,38 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    - name: Download protoc (Linux)
-      if: runner.os == 'Linux' && contains(inputs.deps, 'protoc')
+    - name: Download x64 protoc (Linux)
+      if: runner.os == 'Linux' && runner.arch == 'X64' && contains(inputs.deps, 'protoc')
       uses: ./.github/actions/download-and-verify
       with:
         url: "https://github.com/protocolbuffers/protobuf/releases/download/v25.3/protoc-25.3-linux-x86_64.zip"
         output_file: "protoc-25.3-linux-x86_64.zip"
         checksum: "f853e691868d0557425ea290bf7ba6384eef2fa9b04c323afab49a770ba9da80"
 
-    - name: Install protoc (Linux)
+    - name: Install x64 protoc (Linux)
       env:
         TMP: ${{ inputs.temp || runner.temp }}
-      if: runner.os == 'Linux' && contains(inputs.deps, 'protoc')
+      if: runner.os == 'Linux' && runner.arch == 'X64' && contains(inputs.deps, 'protoc')
       shell: bash
       run: |
         unzip protoc-25.3-linux-x86_64.zip -d "$TMP/protobuf"
+        echo "$TMP/protobuf/bin" >> $GITHUB_PATH
+
+    - name: Download arm64 protoc (Linux)
+      if: runner.os == 'Linux' && runner.arch == 'ARM64' && contains(inputs.deps, 'protoc')
+      uses: ./.github/actions/download-and-verify
+      with:
+        url: "https://github.com/protocolbuffers/protobuf/releases/download/v25.3/protoc-25.3-linux-aarch_64.zip"
+        output_file: "protoc-25.3-linux-aarch_64.zip"
+        checksum: "9eae1f20f70cccc912d1c318c3929b86aebf5afd4b0f32c196ef682c222ed5ae"
+
+    - name: Install arm64 protoc (Linux)
+      env:
+        TMP: ${{ inputs.temp || runner.temp }}
+      if: runner.os == 'Linux' && runner.arch == 'ARM64' && contains(inputs.deps, 'protoc')
+      shell: bash
+      run: |
+        unzip protoc-25.3-linux-aarch_64.zip -d "$TMP/protobuf"
         echo "$TMP/protobuf/bin" >> $GITHUB_PATH
 
     - name: Download protoc (MacOS)
