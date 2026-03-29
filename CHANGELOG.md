@@ -1,6 +1,9 @@
-## v2.7.0-beta - 2026-03-27
+## v2.7.0-beta - 2026-03-29
 
 ### Features:
+
+**Added Linux on arm64**:
+- Added new support for linux on arm64 hardware in github action workflows. [#5](https://github.com/ShorelineCrypto/komodo-defi-framework/pull/5)
 
 **WalletConnect**:
 - Implemented BTC/UTXO transaction signing and legacy swap (v1) support via WalletConnect. [#2566](https://github.com/KomodoPlatform/komodo-defi-framework/pull/2566)
