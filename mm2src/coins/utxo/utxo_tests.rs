@@ -38,8 +38,11 @@ use crate::{
 #[cfg(not(target_arch = "wasm32"))]
 use crate::{WaitForHTLCTxSpendArgs, WithdrawFee};
 use chain::{BlockHeader, BlockHeaderBits, OutPoint};
+use common::custom_futures::repeatable::{Ready, Retry};
 use common::executor::Timer;
-use common::{block_on, block_on_f01, wait_until_sec, OrdRange, PagingOptionsEnum, DEX_FEE_ADDR_RAW_PUBKEY};
+use common::{
+    block_on, block_on_f01, repeatable, wait_until_sec, OrdRange, PagingOptionsEnum, DEX_FEE_ADDR_RAW_PUBKEY,
+};
 use crypto::{privkey::key_pair_from_seed, Bip44Chain, HDPathToAccount, RpcDerivationPath, Secp256k1Secret};
 #[cfg(not(target_arch = "wasm32"))]
 use db_common::sqlite::rusqlite::Connection;
@@ -65,6 +68,7 @@ use std::convert::TryFrom;
 use std::iter;
 use std::num::NonZeroUsize;
 use std::str::FromStr;
+use std::time::Duration;
 
 #[cfg(test)]
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -168,7 +172,7 @@ fn test_extract_secret() {
     let expected_secret =
         <[u8; 32]>::from_hex("5c62072b57b6473aeee6d35270c8b56d86975e6d6d4245b25425d771239fae32").unwrap();
     let secret_hash = &*dhash160(&expected_secret);
-    let secret = block_on(coin.extract_secret(secret_hash, &tx_hex, false)).unwrap();
+    let secret = block_on(coin.extract_secret(secret_hash, &tx_hex)).unwrap();
     assert_eq!(secret, expected_secret);
 }
 
@@ -178,10 +182,11 @@ fn test_send_maker_spends_taker_payment_recoverable_tx() {
     let coin = utxo_coin_for_test(client.into(), None, false);
     let tx_hex = hex::decode("0100000001de7aa8d29524906b2b54ee2e0281f3607f75662cbc9080df81d1047b78e21dbc00000000d7473044022079b6c50820040b1fbbe9251ced32ab334d33830f6f8d0bf0a40c7f1336b67d5b0220142ccf723ddabb34e542ed65c395abc1fbf5b6c3e730396f15d25c49b668a1a401209da937e5609680cb30bff4a7661364ca1d1851c2506fa80c443f00a3d3bf7365004c6b6304f62b0e5cb175210270e75970bb20029b3879ec76c4acd320a8d0589e003636264d01a7d566504bfbac6782012088a9142fb610d856c19fd57f2d0cffe8dff689074b3d8a882103f368228456c940ac113e53dad5c104cf209f2f102a409207269383b6ab9b03deac68ffffffff01d0dc9800000000001976a9146d9d2b554d768232320587df75c4338ecc8bf37d88ac40280e5c").unwrap();
     let secret = hex::decode("9da937e5609680cb30bff4a7661364ca1d1851c2506fa80c443f00a3d3bf7365").unwrap();
+    let pubkey = coin.my_public_key().unwrap();
     let maker_spends_payment_args = SpendPaymentArgs {
         other_payment_tx: &tx_hex,
         time_lock: 777,
-        other_pubkey: coin.my_public_key().unwrap(),
+        other_pubkey: &pubkey,
         secret: &secret,
         secret_hash: &*dhash160(&secret),
         swap_contract_address: &coin.swap_contract_address(),
@@ -551,7 +556,6 @@ fn test_search_for_swap_tx_spend_electrum_was_spent() {
         search_from_block: 0,
         swap_contract_address: &None,
         swap_unique_data: &[],
-        watcher_reward: false,
     };
     let found = block_on(coin.search_for_swap_tx_spend_my(search_input))
         .unwrap()
@@ -586,7 +590,6 @@ fn test_search_for_swap_tx_spend_electrum_was_refunded() {
         search_from_block: 0,
         swap_contract_address: &None,
         swap_unique_data: &[],
-        watcher_reward: false,
     };
     let found = block_on(coin.search_for_swap_tx_spend_my(search_input))
         .unwrap()
@@ -1680,7 +1683,9 @@ fn test_network_info_negative_time_offset() {
     let _info: NetworkInfo = json::from_str(info_str).unwrap();
 }
 
+// TODO: Re-enable once Electrum servers are dockerized: https://github.com/KomodoPlatform/komodo-defi-framework/issues/2708
 #[test]
+#[ignore]
 fn test_unavailable_electrum_proto_version() {
     ElectrumClientImpl::try_new_arc.mock_safe(
         |client_settings, block_headers_storage, streaming_manager, abortable_system, event_handlers, chain_variant| {
@@ -1761,7 +1766,9 @@ fn test_spam_rick() {
     }
 }
 
+// TODO: Re-enable once Electrum servers are dockerized: https://github.com/KomodoPlatform/komodo-defi-framework/issues/2708
 #[test]
+#[ignore]
 fn test_one_unavailable_electrum_proto_version() {
     // First mock with an unrealistically high version requirement that no server would support
     ElectrumClientImpl::try_new_arc.mock_safe(
@@ -1850,7 +1857,9 @@ fn test_qtum_generate_pod() {
     assert_eq!(expected_res, res.to_string());
 }
 
+// TODO: Re-enable once Electrum servers are dockerized: https://github.com/KomodoPlatform/komodo-defi-framework/issues/2708
 #[test]
+#[ignore]
 fn test_qtum_add_delegation() {
     let keypair = key_pair_from_seed("asthma turtle lizard tone genuine tube hunt valley soap cloth urge alpha amazing frost faculty cycle mammal leaf normal bright topple avoid pulse buffalo").unwrap();
     let conf = json!({"coin":"tQTUM","rpcport":13889,"pubtype":120,"p2shtype":110, "mature_confirmations":1});
@@ -1926,7 +1935,9 @@ fn test_qtum_add_delegation_on_already_delegating() {
     assert!(res.is_err());
 }
 
+// TODO: Re-enable once Electrum servers are dockerized: https://github.com/KomodoPlatform/komodo-defi-framework/issues/2708
 #[test]
+#[ignore]
 fn test_qtum_get_delegation_infos() {
     let keypair =
         key_pair_from_seed("federal stay trigger hour exist success game vapor become comfort action phone bright ill target wild nasty crumble dune close rare fabric hen iron").unwrap();
@@ -5427,9 +5438,36 @@ fn test_block_header_utxo_loop() {
     let loop_fut = async move { block_header_utxo_loop(weak_client, loop_handle, spv_conf.unwrap()).await };
 
     let test_fut = async move {
+        // Helper to poll until target height is reached and expected steps are consumed
+        async fn wait_for_height(
+            client: &ElectrumClient,
+            expected_steps: &Arc<Mutex<Vec<(u64, u64)>>>,
+            target_height: u64,
+        ) {
+            repeatable!(async {
+                let height = client
+                    .block_headers_storage()
+                    .get_last_block_height()
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or(0);
+                let steps_empty = expected_steps.lock().unwrap().is_empty();
+                if height >= target_height && steps_empty {
+                    Ready(())
+                } else {
+                    Retry(())
+                }
+            })
+            .repeat_every(Duration::from_millis(100))
+            .with_timeout_ms(30_000)
+            .await
+            .expect("Timed out waiting for block headers to sync");
+        }
+
         *expected_steps.lock().unwrap() = vec![(2, 5), (6, 9), (10, 13), (14, 14)];
         CURRENT_BLOCK_COUNT.store(14, Ordering::Relaxed);
-        Timer::sleep(3.).await;
+        wait_for_height(&client, &expected_steps, 14).await;
         let get_headers_count = client
             .block_headers_storage()
             .get_last_block_height()
@@ -5441,7 +5479,7 @@ fn test_block_header_utxo_loop() {
 
         *expected_steps.lock().unwrap() = vec![(15, 18)];
         CURRENT_BLOCK_COUNT.store(18, Ordering::Relaxed);
-        Timer::sleep(2.).await;
+        wait_for_height(&client, &expected_steps, 18).await;
         let get_headers_count = client
             .block_headers_storage()
             .get_last_block_height()
@@ -5453,7 +5491,7 @@ fn test_block_header_utxo_loop() {
 
         *expected_steps.lock().unwrap() = vec![(19, 19)];
         CURRENT_BLOCK_COUNT.store(19, Ordering::Relaxed);
-        Timer::sleep(2.).await;
+        wait_for_height(&client, &expected_steps, 19).await;
         let get_headers_count = client
             .block_headers_storage()
             .get_last_block_height()
@@ -5475,7 +5513,6 @@ fn test_block_header_utxo_loop() {
 
             assert_eq!(header, None);
         }
-        Timer::sleep(2.).await;
     };
 
     if let Either::Left(_) = block_on(futures::future::select(loop_fut.boxed(), test_fut.boxed())) {

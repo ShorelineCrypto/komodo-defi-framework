@@ -1,3 +1,42 @@
+## v2.7.0-beta - 2026-03-29
+
+### Features:
+
+**Added Linux on arm64**:
+- Added new support for linux on arm64 hardware in github action workflows. [#5](https://github.com/ShorelineCrypto/komodo-defi-framework/pull/5)
+
+**WalletConnect**:
+- Implemented BTC/UTXO transaction signing and legacy swap (v1) support via WalletConnect. [#2566](https://github.com/KomodoPlatform/komodo-defi-framework/pull/2566)
+
+**UTXO**:
+- Added RXD `ForkIdRxd` sighash signing path for Radiant chain support. [#2713](https://github.com/KomodoPlatform/komodo-defi-framework/pull/2713)
+
+---
+
+### Enhancements/Fixes:
+
+**EVM / ETH**:
+- Added SafeERC20 V1 USDT support and docker tests. [#2711](https://github.com/KomodoPlatform/komodo-defi-framework/pull/2711)
+
+---
+
+### Other Changes:
+
+**Infrastructure / CI**:
+- Migrated service endpoints to gleec.com. [#2704](https://github.com/KomodoPlatform/komodo-defi-framework/pull/2704)
+- Migrated docker image push to ShorelineCrypto organization. [#4](https://github.com/ShorelineCrypto/komodo-defi-framework/pull/4)
+- Split docker tests into feature-gated parallel suites. [#2707](https://github.com/KomodoPlatform/komodo-defi-framework/pull/2707)
+- Removed review reminder bot. [#2706](https://github.com/KomodoPlatform/komodo-defi-framework/pull/2706)
+
+**Documentation**:
+- Added AGENTS.md documentation across key crates. [#2465](https://github.com/KomodoPlatform/komodo-defi-framework/pull/2465)
+
+**Legal**:
+- Updated LICENSE IP ownership.
+
+---
+
+
 ## v2.6.0-beta - 2025-11-28
 
 ### Features:
