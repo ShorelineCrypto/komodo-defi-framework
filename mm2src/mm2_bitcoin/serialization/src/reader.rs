@@ -67,6 +67,7 @@ pub enum ChainVariant {
     MORTY,
     RVN,
     PIVX,
+    PART,
 }
 
 impl ChainVariant {
@@ -92,6 +93,9 @@ impl ChainVariant {
     pub fn is_pivx(&self) -> bool {
         matches!(self, ChainVariant::PIVX)
     }
+    pub fn is_part(&self) -> bool {
+        matches!(self, ChainVariant::PART)
+    }
 }
 
 impl TryFrom<&str> for ChainVariant {
@@ -107,6 +111,7 @@ impl TryFrom<&str> for ChainVariant {
             "MORTY" => Ok(ChainVariant::MORTY),
             "RVN" => Ok(ChainVariant::RVN),
             "PIVX" => Ok(ChainVariant::PIVX),
+            "PART" => Ok(ChainVariant::PART),
             _ => Err(format!("Unknown chain variant: {}", value)),
         }
     }
